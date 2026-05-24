@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDesignStore } from "@/lib/store";
 import type { Design } from "@/lib/types";
-import { TahaDialog } from "@/components/taha-dialog";
+import { DraftPublishDialog } from "@/components/draft-publish-dialog";
 
 export default function TaslaklarPage() {
   const [mounted, setMounted] = useState(false);
@@ -27,20 +27,20 @@ export default function TaslaklarPage() {
     e.stopPropagation();
     if (!design.pricing?.finalPrice) {
       toast.error(
-        "Yayınlamak için fiyat sabitlenmiş olmalı. Karta tıkla, fiyatı belirle."
+        "Önce fiyatı sabitle. Karta tıkla, hesaplayıcıdan fiyat belirle."
       );
       setActive(design);
       return;
     }
     if (design.mockups.length === 0) {
-      toast.error("Yayınlamak için en az bir mockup yüklü olmalı.");
+      toast.error("Mockup yok. Taha'nın yüklemesi gerek.");
       setActive(design);
       return;
     }
     setQuickPublishing(design.id);
     try {
       await publishDesign(design.id);
-      toast.success(`'${design.name}' yayınlandı.`);
+      toast.success(`'${design.name}' Mağazada yayınlandı.`);
     } catch {
       toast.error("Yayınlama başarısız.");
     } finally {
@@ -51,8 +51,8 @@ export default function TaslaklarPage() {
   return (
     <div>
       <PageHeader
-        title="Taslaklar"
-        description="Yayınlanmaya hazır ama henüz yayında olmayan ürünler. Tek tıkla yayına çekebilirsin."
+        title="Taslaklar — Fiyatlama & Yayın"
+        description="Taha mockup'ı tamamladı. Yusuf burada fiyatı belirleyip 'Mağazada Yayınla' butonuna basıyor."
         icon={<FileEdit className="h-5 w-5" />}
         accent="from-violet-500 to-fuchsia-500"
       >
@@ -77,7 +77,7 @@ export default function TaslaklarPage() {
             Taslak yok.
           </p>
           <p className="text-xs text-slate-600 mt-1">
-            Taha bir ürünü "Taslağa Kaydet" yaptığında burada görünecek.
+            Taha bir ürünü "Yusuf'a Gönder" yaptığında burada görünecek.
           </p>
         </div>
       )}
@@ -92,7 +92,7 @@ export default function TaslaklarPage() {
                 showMockup
                 highlight
               />
-              <div className="flex items-center gap-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
                 {d.sku && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 font-mono text-slate-300">
                     <Hash className="h-2.5 w-2.5" />
@@ -122,7 +122,7 @@ export default function TaslaklarPage() {
                   </>
                 ) : (
                   <>
-                    <Rocket className="h-3.5 w-3.5" /> Yayına Çek
+                    <Rocket className="h-3.5 w-3.5" /> Mağazada Yayınla
                   </>
                 )}
               </Button>
@@ -132,7 +132,7 @@ export default function TaslaklarPage() {
       )}
 
       {active && (
-        <TahaDialog
+        <DraftPublishDialog
           key={active.id}
           design={active}
           onClose={() => setActive(null)}

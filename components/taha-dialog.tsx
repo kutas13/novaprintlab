@@ -6,10 +6,9 @@ import {
   Download,
   Copy,
   CheckCircle2,
-  Rocket,
   X,
   Loader2,
-  Save,
+  Send,
   Hash,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Dropzone } from "@/components/dropzone";
-import { ProfitCalculator } from "@/components/profit-calculator";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +24,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useDesignStore } from "@/lib/store";
-import type { Design, PricingData } from "@/lib/types";
+import type { Design } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
 import { DesignActions } from "@/components/design-actions";
 import { EtsyAttributesPanel } from "@/components/etsy-attributes-panel";
@@ -38,19 +36,15 @@ export function TahaDialog({
   design: Design;
   onClose: () => void;
 }) {
-  const updatePricing = useDesignStore((s) => s.updatePricing);
   const addMockups = useDesignStore((s) => s.addMockups);
   const removeMockup = useDesignStore((s) => s.removeMockup);
-  const publishDesign = useDesignStore((s) => s.publishDesign);
   const saveAsDraft = useDesignStore((s) => s.saveAsDraft);
   const liveDesign = useDesignStore((s) =>
     s.designs.find((d) => d.id === design.id)
   );
   const current = liveDesign ?? design;
 
-  const [busy, setBusy] = useState<
-    "upload" | "publish" | "draft" | "pricing" | null
-  >(null);
+  const [busy, setBusy] = useState<"upload" | "draft" | null>(null);
 
   const downloadOriginal = async () => {
     try {
@@ -104,55 +98,20 @@ export function TahaDialog({
     }
   };
 
-  const lockPricing = async (pricing: PricingData) => {
-    setBusy("pricing");
-    try {
-      await updatePricing(current.id, pricing);
-      toast.success(`Fiyat sabitlendi: $${pricing.finalPrice?.toFixed(2)}`);
-    } catch {
-      toast.error("Fiyat kaydedilemedi.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const publish = async () => {
+  const sendToYusuf = async () => {
     if (current.mockups.length === 0) {
-      toast.error("Önce en az bir bitmiş mockup yüklemelisin.");
-      return;
-    }
-    if (!current.pricing?.finalPrice) {
-      toast.error("Etsy fiyatını sabitlemen gerek.");
-      return;
-    }
-    setBusy("publish");
-    try {
-      await publishDesign(current.id);
-      toast.success(
-        `'${current.name}' Etsy'de yayınlandı olarak işaretlendi. Takvim güncellendi.`
-      );
-      onClose();
-    } catch {
-      toast.error("Yayınlama başarısız.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const draft = async () => {
-    if (current.mockups.length === 0) {
-      toast.error("Taslağa kaydetmek için en az bir mockup yükle.");
+      toast.error("Yusuf'a göndermek için en az bir mockup yüklemelisin.");
       return;
     }
     setBusy("draft");
     try {
       await saveAsDraft(current.id);
       toast.success(
-        `'${current.name}' Taslaklar'a kaydedildi. Daha sonra yayınlayabilirsin.`
+        `'${current.name}' Yusuf'a gönderildi. Taslaklar sayfasında fiyatlandırılıp yayına çekilecek.`
       );
       onClose();
     } catch {
-      toast.error("Taslağa kaydetme başarısız.");
+      toast.error("Gönderim başarısız.");
     } finally {
       setBusy(null);
     }
@@ -172,8 +131,8 @@ export function TahaDialog({
             )}
           </DialogTitle>
           <DialogDescription>
-            Tasarımı indir, SEO'yu kopyala, kâr hesapla, mockup(lar) yükle, sonra
-            Taslağa kaydet veya doğrudan yayınla.
+            Tasarımı indir, SEO'yu kopyala, mockup(lar) yükle, ardından
+            Yusuf'a gönder. Fiyatlama & yayın Yusuf'ta.
           </DialogDescription>
         </DialogHeader>
 
@@ -251,12 +210,6 @@ export function TahaDialog({
           </div>
 
           <div className="space-y-4">
-            <ProfitCalculator
-              initial={current.pricing}
-              onLock={lockPricing}
-              busy={busy === "pricing"}
-            />
-
             <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold flex items-center gap-2">
@@ -316,50 +269,27 @@ export function TahaDialog({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <Button
-                onClick={draft}
-                disabled={current.mockups.length === 0 || busy !== null}
-                variant="outline"
-                size="lg"
-                className="w-full border-violet-500/50 bg-violet-500/10 hover:bg-violet-500/20 text-violet-200 disabled:opacity-50"
-              >
-                {busy === "draft" ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Kaydediliyor…
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4" /> Taslağa Kaydet
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={publish}
-                disabled={
-                  current.mockups.length === 0 ||
-                  !current.pricing?.finalPrice ||
-                  busy !== null
-                }
-                className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:opacity-90 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
-                size="lg"
-              >
-                {busy === "publish" ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Yayınlanıyor…
-                  </>
-                ) : (
-                  <>
-                    <Rocket className="h-4 w-4" /> Etsy'de Yayınla
-                  </>
-                )}
-              </Button>
-            </div>
+            <Button
+              onClick={sendToYusuf}
+              disabled={current.mockups.length === 0 || busy !== null}
+              className="w-full bg-gradient-to-r from-violet-500 to-fuchsia-600 text-white hover:opacity-90 disabled:opacity-50 shadow-lg shadow-violet-500/20"
+              size="lg"
+            >
+              {busy === "draft" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Gönderiliyor…
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" /> Yusuf'a Gönder (Taslağa Kaydet)
+                </>
+              )}
+            </Button>
             <p className="text-[11px] text-slate-500 text-center">
-              <strong className="text-violet-300">Taslak</strong>: fiyat
-              opsiyonel, sonradan yayınlanabilir •{" "}
-              <strong className="text-emerald-300">Yayınla</strong>: fiyat şart,
-              takvim hemen güncellenir
+              Yusuf <strong className="text-violet-300">Taslaklar</strong>{" "}
+              sayfasında fiyatı belirleyip{" "}
+              <strong className="text-emerald-300">Mağazada Yayınla</strong>{" "}
+              butonuna basacak.
             </p>
 
             <DesignActions

@@ -23,15 +23,15 @@ export default function TahaPage() {
   return (
     <div>
       <PageHeader
-        title="Taha — Mockup & Yayınla"
-        description="Tasarımı indir, SEO'yu kopyala, kâr hesapla, mockup'ları yükle, sonra taslağa kaydet veya doğrudan yayınla."
+        title="Taha — Mockup Hazırlama"
+        description="Tasarımı indir, SEO'yu kopyala, bitmiş mockup'ları yükle, ardından 'Yusuf'a Gönder' ile taslağa düşür. Fiyat & yayın Yusuf'ta."
         icon={<ImageIcon className="h-5 w-5" />}
         accent="from-amber-500 to-orange-500"
       />
 
       <section>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Yayın Bekleyenler</h2>
+          <h2 className="text-lg font-semibold">Mockup Bekleyenler</h2>
           {mounted && <Badge variant="info">{waiting.length} ürün</Badge>}
         </div>
 
