@@ -28,6 +28,7 @@ import {
 import { useDesignStore } from "@/lib/store";
 import type { Design, PricingData } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
+import { DesignActions } from "@/components/design-actions";
 
 export function TahaDialog({
   design,
@@ -357,6 +358,12 @@ export function TahaDialog({
               <strong className="text-emerald-300">Yayınla</strong>: fiyat şart,
               takvim hemen güncellenir
             </p>
+
+            <DesignActions
+              design={current}
+              variant="full"
+              onActed={onClose}
+            />
           </div>
         </div>
       </DialogContent>

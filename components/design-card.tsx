@@ -3,6 +3,7 @@
 import { Design } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
+import { DesignActions } from "@/components/design-actions";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { tr } from "date-fns/locale";
@@ -12,6 +13,8 @@ interface DesignCardProps {
   onClick?: () => void;
   highlight?: boolean;
   showMockup?: boolean;
+  /** Show compact 'geri gönder' + 'sil' icon buttons in the corner. */
+  showActions?: boolean;
 }
 
 export function DesignCard({
@@ -19,6 +22,7 @@ export function DesignCard({
   onClick,
   highlight,
   showMockup,
+  showActions = true,
 }: DesignCardProps) {
   return (
     <Card
@@ -66,6 +70,11 @@ export function DesignCard({
         <div className="absolute top-2 left-2">
           <StatusBadge status={design.status} />
         </div>
+        {showActions && (
+          <div className="absolute top-2 right-2 opacity-70 group-hover:opacity-100 transition-opacity">
+            <DesignActions design={design} variant="compact" />
+          </div>
+        )}
       </div>
       <div className="p-3 space-y-1 relative">
         <div className="flex items-center gap-1.5 min-w-0">

@@ -8,8 +8,15 @@ import { format } from "date-fns";
 import { tr } from "date-fns/locale";
 import { DollarSign, ChevronLeft, ChevronRight, Images } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DesignActions } from "@/components/design-actions";
 
-export function ArchiveCard({ design }: { design: Design }) {
+export function ArchiveCard({
+  design,
+  showActions = true,
+}: {
+  design: Design;
+  showActions?: boolean;
+}) {
   const [idx, setIdx] = useState(0);
   const total = design.mockups.length;
   const current = total > 0 ? design.mockups[idx] : null;
@@ -98,16 +105,23 @@ export function ArchiveCard({ design }: { design: Design }) {
             </span>
           )}
         </div>
-        <div className="flex items-center justify-between text-[11px] text-slate-500">
-          <span>
-            {design.publishedAt &&
-              format(new Date(design.publishedAt), "d MMM yyyy", { locale: tr })}
-          </span>
-          {design.pricing?.finalPrice && (
-            <span className="flex items-center gap-0.5 text-emerald-400 font-medium">
-              <DollarSign className="h-3 w-3" />
-              {design.pricing.finalPrice.toFixed(2)}
+        <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="truncate">
+              {design.publishedAt &&
+                format(new Date(design.publishedAt), "d MMM yyyy", {
+                  locale: tr,
+                })}
             </span>
+            {design.pricing?.finalPrice && (
+              <span className="flex items-center gap-0.5 text-emerald-400 font-medium">
+                <DollarSign className="h-3 w-3" />
+                {design.pricing.finalPrice.toFixed(2)}
+              </span>
+            )}
+          </div>
+          {showActions && (
+            <DesignActions design={design} variant="compact" />
           )}
         </div>
       </div>

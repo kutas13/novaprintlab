@@ -19,6 +19,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useDesignStore } from "@/lib/store";
+import { DesignActions } from "@/components/design-actions";
 import type { Design, SeoData } from "@/lib/types";
 
 export default function KerimPage() {
@@ -316,6 +317,8 @@ function SeoDialog({
             )}
           </Button>
         </div>
+
+        <DesignActions design={design} variant="full" onActed={onClose} />
       </DialogContent>
     </Dialog>
   );

@@ -90,9 +90,28 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
           } else if (event === "UPDATE") {
             const row = payload.new as DesignRow;
             set((s) => ({
-              designs: s.designs.map((d) =>
-                d.id === row.id ? rowToDesign(row, publicUrl) : d
-              ),
+              designs: s.designs.map((d) => {
+                if (d.id !== row.id) return d;
+                const next = rowToDesign(row, publicUrl);
+                // Defensive merge: realtime payloads occasionally drop
+                // unchanged columns (the SEO blob disappearing after a
+                // pricing update was caused by this). Preserve any rich
+                // field the realtime event left null/empty but we already
+                // hold locally.
+                return {
+                  ...next,
+                  seo: next.seo ?? d.seo,
+                  pricing: next.pricing ?? d.pricing,
+                  mockups:
+                    next.mockups.length > 0
+                      ? next.mockups
+                      : row.mockup_image_paths !== undefined &&
+                          row.mockup_image_paths !== null
+                        ? next.mockups
+                        : d.mockups,
+                  sku: next.sku ?? d.sku,
+                };
+              }),
             }));
           } else if (event === "DELETE") {
             const oldRow = payload.old as Partial<DesignRow>;
@@ -158,31 +177,32 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       seo_tags: seo.tags,
       status: "Mockup ve Yayınlama Bekliyor" as DesignStatus,
     };
-    const { data, error } = await supabase
-      .from("designs")
-      .update(patch)
-      .eq("id", id)
-      .select("*")
-      .single();
+    const { error } = await supabase.from("designs").update(patch).eq("id", id);
     if (error) throw error;
-    const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              status: "Mockup ve Yayınlama Bekliyor",
+              seo: { title: seo.title, description: seo.description, tags: seo.tags },
+            }
+          : d
+      ),
     }));
   },
 
   updateSku: async (id, sku) => {
     const value = sku.trim() || null;
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("designs")
       .update({ sku: value })
-      .eq("id", id)
-      .select("*")
-      .single();
+      .eq("id", id);
     if (error) throw error;
-    const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id ? { ...d, sku: value ?? undefined } : d
+      ),
     }));
   },
 
@@ -193,16 +213,18 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       pricing_target_profit: pricing.targetProfit,
       pricing_final_price: pricing.finalPrice,
     };
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("designs")
       .update(patch)
-      .eq("id", id)
-      .select("*")
-      .single();
+      .eq("id", id);
     if (error) throw error;
-    const next = rowToDesign(data as DesignRow, publicUrl);
+    // Optimistic local update — only the pricing fields, never touch SEO /
+    // mockups / status. Avoids accidentally clearing other columns if a
+    // realtime payload arrives without them.
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id ? { ...d, pricing: { ...pricing } } : d
+      ),
     }));
   },
 
@@ -216,19 +238,23 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       const existing = get().designs.find((d) => d.id === id);
       const currentPaths = existing?.mockups.map((m) => m.path) ?? [];
       const nextPaths = [...currentPaths, ...uploaded];
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("designs")
         .update({ mockup_image_paths: nextPaths })
-        .eq("id", id)
-        .select("*")
-        .single();
+        .eq("id", id);
       if (error) {
         await Promise.all(uploaded.map((p) => removeImage(p)));
         throw error;
       }
-      const next = rowToDesign(data as DesignRow, publicUrl);
       set((s) => ({
-        designs: s.designs.map((d) => (d.id === id ? next : d)),
+        designs: s.designs.map((d) =>
+          d.id === id
+            ? {
+                ...d,
+                mockups: nextPaths.map((p) => ({ path: p, url: publicUrl(p) })),
+              }
+            : d
+        ),
       }));
     } catch (e) {
       console.error("[addMockups]", e);
@@ -244,65 +270,67 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     const nextPaths = existing.mockups
       .map((m) => m.path)
       .filter((p) => p !== path);
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("designs")
       .update({ mockup_image_paths: nextPaths })
-      .eq("id", id)
-      .select("*")
-      .single();
+      .eq("id", id);
     if (error) throw error;
     await removeImage(path);
-    const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              mockups: nextPaths.map((p) => ({ path: p, url: publicUrl(p) })),
+            }
+          : d
+      ),
     }));
   },
 
   saveAsDraft: async (id) => {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("designs")
       .update({
         status: "Taslak" as DesignStatus,
         published_at: null,
       })
-      .eq("id", id)
-      .select("*")
-      .single();
+      .eq("id", id);
     if (error) throw error;
-    const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id ? { ...d, status: "Taslak", publishedAt: undefined } : d
+      ),
     }));
   },
 
   publishDesign: async (id) => {
-    const { data, error } = await supabase
+    const publishedAt = new Date().toISOString();
+    const { error } = await supabase
       .from("designs")
       .update({
         status: "Aktif Mağaza" as DesignStatus,
-        published_at: new Date().toISOString(),
+        published_at: publishedAt,
       })
-      .eq("id", id)
-      .select("*")
-      .single();
+      .eq("id", id);
     if (error) throw error;
-    const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id ? { ...d, status: "Aktif Mağaza", publishedAt } : d
+      ),
     }));
   },
 
   setStatus: async (id, status) => {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("designs")
       .update({ status })
-      .eq("id", id)
-      .select("*")
-      .single();
+      .eq("id", id);
     if (error) throw error;
-    const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
-      designs: s.designs.map((d) => (d.id === id ? next : d)),
+      designs: s.designs.map((d) =>
+        d.id === id ? { ...d, status } : d
+      ),
     }));
   },
 

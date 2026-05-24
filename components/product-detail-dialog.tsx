@@ -31,6 +31,7 @@ import { toast } from "sonner";
 import { Design } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
 import { downloadUrl, extFromUrl, safeFilename } from "@/lib/download";
+import { DesignActions } from "@/components/design-actions";
 
 export function ProductDetailDialog({
   design,
@@ -375,6 +376,12 @@ export function ProductDetailDialog({
             >
               <ExternalLink className="h-4 w-4" /> Orijinali Yeni Sekmede Aç
             </Button>
+
+            <DesignActions
+              design={design}
+              variant="full"
+              onActed={onClose}
+            />
           </div>
         </div>
       </DialogContent>
