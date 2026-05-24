@@ -96,7 +96,7 @@ export function ProductDetailDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="border-slate-800 bg-slate-950 sm:max-w-5xl">
+      <DialogContent className="border-slate-800 bg-slate-950 sm:max-w-5xl max-h-[92vh] overflow-y-auto scrollbar-thin">
         <DialogHeader>
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle className="flex items-center gap-2 text-xl">
@@ -411,7 +411,7 @@ function CopyBlock({
       <p
         className={cn(
           multiline
-            ? "text-xs text-slate-300 whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto scrollbar-thin pr-2"
+            ? "text-xs text-slate-300 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto scrollbar-thin pr-2 font-mono"
             : "text-sm text-slate-200 font-medium leading-snug"
         )}
       >

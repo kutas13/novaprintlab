@@ -158,7 +158,7 @@ export function TahaDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="border-slate-800 bg-slate-950 sm:max-w-4xl">
+      <DialogContent className="border-slate-800 bg-slate-950 sm:max-w-4xl max-h-[92vh] overflow-y-auto scrollbar-thin">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
             <ImageIcon className="h-5 w-5 text-amber-400" /> {current.name}
@@ -388,7 +388,7 @@ function CopyRow({
       <p
         className={cn(
           multiline
-            ? "text-xs text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto scrollbar-thin pr-2"
+            ? "text-xs text-slate-300 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto scrollbar-thin pr-2 font-mono"
             : "text-sm text-slate-200 font-medium leading-snug"
         )}
       >

@@ -163,13 +163,14 @@ function SeoDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && !saving && onClose()}>
-      <DialogContent className="border-slate-800 bg-slate-950 sm:max-w-3xl">
+      <DialogContent className="border-slate-800 bg-slate-950 sm:max-w-4xl max-h-[92vh] overflow-y-auto scrollbar-thin">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-violet-400" /> {design.name}
           </DialogTitle>
           <DialogDescription>
-            Etsy SEO içeriğini AI ile oluştur veya elle düzenle.
+            Etsy SEO içeriğini AI ile oluştur veya elle düzenle. Açıklama
+            emoji-zengin, bölümlü Etsy formatında üretilir.
           </DialogDescription>
         </DialogHeader>
 
@@ -228,13 +229,18 @@ function SeoDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="description">Açıklama</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="description">Açıklama</Label>
+                <span className="text-xs text-slate-500 tabular-nums">
+                  {description.length.toLocaleString()} karakter
+                </span>
+              </div>
               <Textarea
                 id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="AI üretilen açıklama burada görünecek…"
-                className="bg-slate-900 border-slate-800 min-h-[160px]"
+                placeholder="AI üretilen emoji-zengin, bölümlü Etsy açıklaması burada görünecek…"
+                className="bg-slate-900 border-slate-800 min-h-[360px] font-mono text-xs leading-relaxed whitespace-pre-wrap"
                 disabled={saving}
               />
             </div>
