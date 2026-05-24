@@ -85,7 +85,19 @@ export default function KerimPage() {
               );
               setActive(null);
             } catch (e) {
-              toast.error("Kaydetme başarısız. Tekrar dene.");
+              const msg =
+                e instanceof Error ? e.message : "Bilinmeyen hata.";
+              const code =
+                (e as Error & { code?: string })?.code ??
+                ((e as { code?: string })?.code as string | undefined);
+              if (code === "ATTRIBUTES_NOT_PERSISTED") {
+                // SEO itself was saved — surface as warning, move on.
+                toast.warning(msg, { duration: 8000 });
+                setActive(null);
+              } else {
+                toast.error(`Kaydetme başarısız: ${msg}`, { duration: 10000 });
+                console.error("[Kerim updateSeo]", e);
+              }
             }
           }}
         />

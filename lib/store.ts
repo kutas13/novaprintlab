@@ -185,14 +185,36 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   },
 
   updateSeo: async (id, seo) => {
-    const patch = {
+    const fullPatch = {
       seo_title: seo.title,
       seo_description: seo.description,
       seo_tags: seo.tags,
       seo_attributes: seo.attributes ?? null,
       status: "Mockup ve Yayınlama Bekliyor" as DesignStatus,
     };
-    const { error } = await supabase.from("designs").update(patch).eq("id", id);
+    let attributesPersisted = true;
+    let { error } = await supabase.from("designs").update(fullPatch).eq("id", id);
+    if (
+      error &&
+      // Postgres "undefined_column" - the seo_attributes migration hasn't
+      // been applied to this Supabase project yet. Fall back to saving
+      // everything else so the workflow isn't blocked.
+      (error.code === "42703" ||
+        /seo_attributes/i.test(error.message || ""))
+    ) {
+      attributesPersisted = false;
+      const fallback = {
+        seo_title: seo.title,
+        seo_description: seo.description,
+        seo_tags: seo.tags,
+        status: "Mockup ve Yayınlama Bekliyor" as DesignStatus,
+      };
+      const retry = await supabase
+        .from("designs")
+        .update(fallback)
+        .eq("id", id);
+      error = retry.error;
+    }
     if (error) throw error;
     set((s) => ({
       designs: s.designs.map((d) =>
@@ -204,12 +226,20 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
                 title: seo.title,
                 description: seo.description,
                 tags: seo.tags,
-                attributes: seo.attributes,
+                attributes: attributesPersisted ? seo.attributes : undefined,
               },
             }
           : d
       ),
     }));
+    if (!attributesPersisted && seo.attributes) {
+      const err = new Error(
+        "SEO kaydedildi ama Etsy özellikleri DB'ye yazılamadı. " +
+          "Supabase'de 20260524_seo_attributes.sql migration'ını çalıştır."
+      );
+      (err as Error & { code?: string }).code = "ATTRIBUTES_NOT_PERSISTED";
+      throw err;
+    }
   },
 
   updateSku: async (id, sku) => {
