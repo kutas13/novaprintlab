@@ -16,6 +16,11 @@ export interface PricingData {
   finalPrice: number | null;
 }
 
+export interface MockupAsset {
+  path: string;
+  url: string;
+}
+
 /** Application-level shape (used across UI). */
 export interface Design {
   id: string;
@@ -24,9 +29,8 @@ export interface Design {
   createdAt: string;
   publishedAt?: string;
   originalImagePath: string;
-  mockupImagePath?: string;
   originalImageUrl: string;
-  mockupImageUrl?: string;
+  mockups: MockupAsset[];
   seo?: SeoData;
   pricing?: PricingData;
 }
@@ -37,7 +41,7 @@ export interface DesignRow {
   name: string;
   status: DesignStatus;
   original_image_path: string;
-  mockup_image_path: string | null;
+  mockup_image_paths: string[] | null;
   seo_title: string | null;
   seo_description: string | null;
   seo_tags: string[] | null;
@@ -83,6 +87,11 @@ export function rowToDesign(
         }
       : undefined;
 
+  const mockupPaths = row.mockup_image_paths ?? [];
+  const mockups: MockupAsset[] = mockupPaths
+    .filter((p): p is string => typeof p === "string" && p.length > 0)
+    .map((path) => ({ path, url: publicUrl(path) }));
+
   return {
     id: row.id,
     name: row.name,
@@ -90,9 +99,8 @@ export function rowToDesign(
     createdAt: row.created_at,
     publishedAt: row.published_at ?? undefined,
     originalImagePath: row.original_image_path,
-    mockupImagePath: row.mockup_image_path ?? undefined,
     originalImageUrl: publicUrl(row.original_image_path),
-    mockupImageUrl: row.mockup_image_path ? publicUrl(row.mockup_image_path) : undefined,
+    mockups,
     seo,
     pricing,
   };

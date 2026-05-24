@@ -9,6 +9,7 @@ import {
   Image as ImageIcon,
   LogOut,
   Palette,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -37,6 +38,12 @@ const NAV = [
     href: "/dashboard/taha",
     icon: ImageIcon,
     accent: "from-amber-500 to-orange-500",
+  },
+  {
+    label: "Ürünler — Aktif Mağaza",
+    href: "/dashboard/urunler",
+    icon: Package,
+    accent: "from-rose-500 to-pink-500",
   },
 ];
 

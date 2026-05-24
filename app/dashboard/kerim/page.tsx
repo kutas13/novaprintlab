@@ -117,7 +117,10 @@ function SeoDialog({
       const res = await fetch("/api/generate-seo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ designName: design.name }),
+        body: JSON.stringify({
+          designName: design.name,
+          imageUrl: design.originalImageUrl,
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) {
@@ -188,14 +191,18 @@ function SeoDialog({
             >
               {generating ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> AI çalışıyor…
+                  <Loader2 className="h-4 w-4 animate-spin" /> Görsel analiz ediliyor…
                 </>
               ) : (
                 <>
-                  <Wand2 className="h-4 w-4" /> AI ile SEO Oluştur
+                  <Wand2 className="h-4 w-4" /> Görseli AI ile Analiz Et & SEO Üret
                 </>
               )}
             </Button>
+            <p className="text-[11px] text-slate-500 -mt-2">
+              AI tasarımın görselini analiz edip Etsy'ye optimize İngilizce
+              başlık, açıklama ve 13 etiket üretir.
+            </p>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">

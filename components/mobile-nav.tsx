@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CalendarDays, Upload, Sparkles, Image as ImageIcon, LogOut } from "lucide-react";
+import {
+  CalendarDays,
+  Upload,
+  Sparkles,
+  Image as ImageIcon,
+  LogOut,
+  Package,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -11,6 +18,7 @@ const NAV = [
   { label: "Yusuf", href: "/dashboard/yusuf", icon: Upload },
   { label: "Kerim", href: "/dashboard/kerim", icon: Sparkles },
   { label: "Taha", href: "/dashboard/taha", icon: ImageIcon },
+  { label: "Ürünler", href: "/dashboard/urunler", icon: Package },
 ];
 
 export function MobileNav() {
@@ -26,7 +34,7 @@ export function MobileNav() {
 
   return (
     <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-800/80 glass-strong safe-bottom">
-      <nav className="grid grid-cols-5">
+      <nav className="grid grid-cols-6">
         {NAV.map((item) => {
           const Icon = item.icon;
           const active =

@@ -18,7 +18,7 @@ create table public.designs (
     check (status in ('SEO Bekliyor', 'Mockup ve Yayınlama Bekliyor', 'Aktif Mağaza')),
 
   original_image_path text not null,
-  mockup_image_path   text,
+  mockup_image_paths  text[] not null default '{}',
 
   seo_title       text,
   seo_description text,

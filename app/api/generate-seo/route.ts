@@ -1,14 +1,25 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const SYSTEM_PROMPT = `You are an expert Etsy SEO specialist for a print-on-demand store. Given a raw design name, you write listing copy that ranks on Etsy and converts buyers.
+const SYSTEM_PROMPT = `You are an elite Etsy SEO copywriter specializing in print-on-demand listings (wall art, t-shirts, stickers, mugs, posters, tote bags, etc.). You will be shown the actual design image. Your job is to analyze the visual content and write listing copy that ranks high on Etsy search and converts buyers.
 
-Rules:
-- Output STRICT JSON only — no markdown, no commentary.
-- title: English, MAX 140 characters, keyword-front-loaded, no ALL CAPS, no emojis.
-- description: 3–5 short paragraphs, English, friendly-professional, includes use cases (gift, room decor, t-shirt, sticker, etc.), shipping/quality reassurance, and a soft call-to-action.
-- tags: EXACTLY 13 unique English tags, each <= 20 characters, lowercase, multi-word allowed (e.g. "boho wall art"), no punctuation, no duplicates, no plural-of-itself duplicates.
-- Tags must cover: subject, style, audience, gift occasion, room/use, color/aesthetic, related searches.
+ANALYZE the image first:
+- What is the subject/illustration? (animal, person, quote, abstract, floral, retro, minimalist, etc.)
+- What is the art style? (line art, watercolor, vintage, boho, y2k, kawaii, dark academia, cottagecore, etc.)
+- What is the dominant color palette / mood?
+- Who is the target buyer? (women, men, kids, gift-givers, plant moms, dog moms, gamers, etc.)
+- What occasions / use cases fit? (Christmas gift, mother's day, birthday, baby shower, wedding, anniversary, housewarming, valentine, halloween, etc.)
+- What product types would this design sell well on? (shirt, mug, sticker, poster, sweatshirt, tote, etc.)
+
+OUTPUT RULES (strict JSON, no markdown, no commentary):
+- title: ENGLISH, max 140 characters. Front-load the strongest keyword. No ALL CAPS, no emojis. Format: "[Subject + Style] [Product Type] | [Occasion/Audience] [Modifier], [Gift Keyword]". Example: "Boho Sun Wall Art, Minimalist Celestial Line Drawing Poster, Bohemian Home Decor, Housewarming Gift for Her".
+- description: ENGLISH, 3–5 short paragraphs separated by blank lines. Friendly-professional tone. Include:
+  (1) Hook describing the design and who it's perfect for.
+  (2) Product details / why they'll love it.
+  (3) Gift / use-case angles (3–4 occasions).
+  (4) Quality + shipping reassurance (high-quality print, fast shipping, satisfaction guarantee).
+  (5) Soft CTA ("Add to cart today" / "Order yours now").
+- tags: EXACTLY 13 ENGLISH tags. Each tag ≤ 20 characters, lowercase, multi-word allowed, no punctuation, no duplicates, no plural-of-singular duplicates. Cover: subject, style, audience, gift occasion, room/use, color/aesthetic, related searches buyers actually type on Etsy.
 
 Return JSON with keys: title (string), description (string), tags (string[13]).`;
 
@@ -22,26 +33,50 @@ export async function POST(req: Request) {
       );
     }
 
-    const { designName } = await req.json();
-    if (typeof designName !== "string" || !designName.trim()) {
+    const body = await req.json().catch(() => ({}));
+    const designName: string =
+      typeof body.designName === "string" ? body.designName.trim() : "";
+    const imageUrl: string =
+      typeof body.imageUrl === "string" ? body.imageUrl.trim() : "";
+
+    if (!imageUrl && !designName) {
       return NextResponse.json(
-        { ok: false, error: "designName gerekli." },
+        { ok: false, error: "imageUrl veya designName gerekli." },
         { status: 400 }
       );
     }
 
     const openai = new OpenAI({ apiKey });
 
+    const userContent: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
+    > = [
+      {
+        type: "text",
+        text: imageUrl
+          ? `Analyze this design image and produce Etsy listing JSON for it.${
+              designName ? ` Internal reference name (use only as a weak hint): "${designName}".` : ""
+            }`
+          : `Generate Etsy listing JSON for a design referenced only by name: "${designName}".`,
+      },
+    ];
+
+    if (imageUrl) {
+      userContent.push({
+        type: "image_url",
+        image_url: { url: imageUrl, detail: "high" },
+      });
+    }
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       response_format: { type: "json_object" },
-      temperature: 0.7,
+      temperature: 0.75,
+      max_tokens: 1200,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `Design name: "${designName}"\n\nGenerate the listing JSON now.`,
-        },
+        { role: "user", content: userContent },
       ],
     });
 

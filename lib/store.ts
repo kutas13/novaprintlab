@@ -27,8 +27,8 @@ interface DesignState {
   addDesign: (name: string, file: File) => Promise<Design | null>;
   updateSeo: (id: string, seo: SeoData) => Promise<void>;
   updatePricing: (id: string, pricing: PricingData) => Promise<void>;
-  attachMockup: (id: string, file: File) => Promise<void>;
-  removeMockup: (id: string) => Promise<void>;
+  addMockups: (id: string, files: File[]) => Promise<void>;
+  removeMockup: (id: string, path: string) => Promise<void>;
   publishDesign: (id: string) => Promise<void>;
   setStatus: (id: string, status: DesignStatus) => Promise<void>;
   deleteDesign: (id: string) => Promise<void>;
@@ -179,43 +179,52 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     }));
   },
 
-  attachMockup: async (id, file) => {
+  addMockups: async (id, files) => {
+    if (files.length === 0) return;
     set({ uploading: true });
     try {
-      const path = await uploadImage(file, "mockups");
+      const uploaded = await Promise.all(
+        files.map((f) => uploadImage(f, "mockups"))
+      );
       const existing = get().designs.find((d) => d.id === id);
+      const currentPaths = existing?.mockups.map((m) => m.path) ?? [];
+      const nextPaths = [...currentPaths, ...uploaded];
       const { data, error } = await supabase
         .from("designs")
-        .update({ mockup_image_path: path })
+        .update({ mockup_image_paths: nextPaths })
         .eq("id", id)
         .select("*")
         .single();
-      if (error) throw error;
-      if (existing?.mockupImagePath) {
-        await removeImage(existing.mockupImagePath);
+      if (error) {
+        await Promise.all(uploaded.map((p) => removeImage(p)));
+        throw error;
       }
       const next = rowToDesign(data as DesignRow, publicUrl);
       set((s) => ({
         designs: s.designs.map((d) => (d.id === id ? next : d)),
       }));
     } catch (e) {
-      console.error("[attachMockup]", e);
+      console.error("[addMockups]", e);
       throw e;
     } finally {
       set({ uploading: false });
     }
   },
 
-  removeMockup: async (id) => {
+  removeMockup: async (id, path) => {
     const existing = get().designs.find((d) => d.id === id);
+    if (!existing) return;
+    const nextPaths = existing.mockups
+      .map((m) => m.path)
+      .filter((p) => p !== path);
     const { data, error } = await supabase
       .from("designs")
-      .update({ mockup_image_path: null })
+      .update({ mockup_image_paths: nextPaths })
       .eq("id", id)
       .select("*")
       .single();
     if (error) throw error;
-    if (existing?.mockupImagePath) await removeImage(existing.mockupImagePath);
+    await removeImage(path);
     const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
       designs: s.designs.map((d) => (d.id === id ? next : d)),
@@ -258,7 +267,9 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     const { error } = await supabase.from("designs").delete().eq("id", id);
     if (error) throw error;
     if (existing?.originalImagePath) await removeImage(existing.originalImagePath);
-    if (existing?.mockupImagePath) await removeImage(existing.mockupImagePath);
+    if (existing?.mockups?.length) {
+      await Promise.all(existing.mockups.map((m) => removeImage(m.path)));
+    }
     set((s) => ({ designs: s.designs.filter((d) => d.id !== id) }));
   },
 

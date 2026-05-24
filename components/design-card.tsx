@@ -39,15 +39,28 @@ export function DesignCard({
           decoding="async"
           className="absolute inset-0 w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105"
         />
-        {showMockup && design.mockupImageUrl && (
-          <div className="absolute bottom-2 right-2 h-16 w-16 sm:h-20 sm:w-20 rounded-lg overflow-hidden ring-2 ring-slate-900 shadow-xl bg-slate-900">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={design.mockupImageUrl}
-              alt="mockup"
-              loading="lazy"
-              className="w-full h-full object-cover"
-            />
+        {showMockup && design.mockups.length > 0 && (
+          <div className="absolute bottom-2 right-2 flex -space-x-2">
+            {design.mockups.slice(0, 3).map((m, i) => (
+              <div
+                key={m.path}
+                className="h-14 w-14 sm:h-16 sm:w-16 rounded-lg overflow-hidden ring-2 ring-slate-900 shadow-xl bg-slate-900"
+                style={{ zIndex: 10 - i }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={m.url}
+                  alt={`mockup ${i + 1}`}
+                  loading="lazy"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            ))}
+            {design.mockups.length > 3 && (
+              <div className="h-14 w-14 sm:h-16 sm:w-16 rounded-lg ring-2 ring-slate-900 bg-slate-950/90 flex items-center justify-center text-[11px] font-semibold text-slate-300">
+                +{design.mockups.length - 3}
+              </div>
+            )}
           </div>
         )}
         <div className="absolute top-2 left-2">

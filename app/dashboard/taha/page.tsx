@@ -91,7 +91,7 @@ export default function TahaPage() {
 
 function TahaDialog({ design, onClose }: { design: Design; onClose: () => void }) {
   const updatePricing = useDesignStore((s) => s.updatePricing);
-  const attachMockup = useDesignStore((s) => s.attachMockup);
+  const addMockups = useDesignStore((s) => s.addMockups);
   const removeMockup = useDesignStore((s) => s.removeMockup);
   const publishDesign = useDesignStore((s) => s.publishDesign);
   const liveDesign = useDesignStore((s) =>
@@ -128,14 +128,28 @@ function TahaDialog({ design, onClose }: { design: Design; onClose: () => void }
   };
 
   const handleMockupUpload = async (files: File[]) => {
-    const file = files[0];
-    if (!file) return;
+    if (files.length === 0) return;
     setBusy("upload");
     try {
-      await attachMockup(current.id, file);
-      toast.success("Mockup yüklendi.");
+      await addMockups(current.id, files);
+      toast.success(
+        files.length === 1
+          ? "Mockup yüklendi."
+          : `${files.length} mockup yüklendi.`
+      );
     } catch {
       toast.error("Mockup yüklenemedi.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRemoveMockup = async (path: string) => {
+    setBusy("upload");
+    try {
+      await removeMockup(current.id, path);
+    } catch {
+      toast.error("Mockup silinemedi.");
     } finally {
       setBusy(null);
     }
@@ -154,8 +168,8 @@ function TahaDialog({ design, onClose }: { design: Design; onClose: () => void }
   };
 
   const publish = async () => {
-    if (!current.mockupImagePath) {
-      toast.error("Önce bitmiş mockup'ı yüklemelisin.");
+    if (current.mockups.length === 0) {
+      toast.error("Önce en az bir bitmiş mockup yüklemelisin.");
       return;
     }
     if (!current.pricing?.finalPrice) {
@@ -268,41 +282,60 @@ function TahaDialog({ design, onClose }: { design: Design; onClose: () => void }
             />
 
             <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 space-y-3">
-              <h3 className="font-semibold flex items-center gap-2">
-                <ImageIcon className="h-4 w-4 text-blue-400" /> Bitmiş Mockup
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4 text-blue-400" /> Bitmiş Mockuplar
+                </h3>
+                {current.mockups.length > 0 && (
+                  <span className="text-[11px] text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="h-3 w-3" /> {current.mockups.length} mockup
+                  </span>
+                )}
+              </div>
 
-              {current.mockupImageUrl ? (
-                <div className="space-y-2">
-                  <div className="aspect-square rounded-lg overflow-hidden bg-slate-950 border border-slate-800 relative">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={current.mockupImageUrl}
-                      alt="mockup"
-                      className="w-full h-full object-cover"
-                    />
-                    <button
-                      onClick={() => removeMockup(current.id)}
-                      disabled={busy !== null}
-                      className="absolute top-2 right-2 h-7 w-7 rounded-md bg-slate-950/80 hover:bg-red-500/80 border border-slate-700 flex items-center justify-center disabled:opacity-50"
+              {current.mockups.length > 0 && (
+                <div className="grid grid-cols-3 gap-2">
+                  {current.mockups.map((m, i) => (
+                    <div
+                      key={m.path}
+                      className="relative aspect-square rounded-lg overflow-hidden bg-slate-950 border border-slate-800 group/mock"
                     >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="h-3 w-3" /> Mockup hazır
-                  </p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={m.url}
+                        alt={`mockup ${i + 1}`}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => handleRemoveMockup(m.path)}
+                        disabled={busy !== null}
+                        className="absolute top-1 right-1 h-6 w-6 rounded-md bg-slate-950/80 hover:bg-red-500/90 border border-slate-700 flex items-center justify-center disabled:opacity-50 opacity-0 group-hover/mock:opacity-100 transition-opacity"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                      <span className="absolute bottom-1 left-1 text-[10px] font-semibold bg-slate-950/80 text-slate-300 rounded px-1.5 py-0.5">
+                        #{i + 1}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ) : busy === "upload" ? (
-                <div className="rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/40 p-10 flex items-center justify-center">
-                  <Loader2 className="h-6 w-6 text-blue-400 animate-spin" />
+              )}
+
+              {busy === "upload" ? (
+                <div className="rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/40 p-6 flex items-center justify-center">
+                  <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />
                 </div>
               ) : (
                 <Dropzone
-                  multiple={false}
+                  multiple
                   onFiles={handleMockupUpload}
-                  hint="Hazırladığın mockup fotoğrafı (JPEG/PNG)"
-                  className="p-6"
+                  hint={
+                    current.mockups.length > 0
+                      ? "Daha fazla mockup ekle (birden fazla seçebilirsin)"
+                      : "Birden fazla mockup seçebilir veya sürükleyebilirsin"
+                  }
+                  className="p-4"
                 />
               )}
             </div>
@@ -310,7 +343,7 @@ function TahaDialog({ design, onClose }: { design: Design; onClose: () => void }
             <Button
               onClick={publish}
               disabled={
-                !current.mockupImagePath ||
+                current.mockups.length === 0 ||
                 !current.pricing?.finalPrice ||
                 busy !== null
               }
