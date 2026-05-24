@@ -56,19 +56,35 @@ export default function YusufPage() {
     if (pending.length === 0) return;
     setSaving(true);
     let success = 0;
+    const errors: string[] = [];
     try {
       await Promise.all(
         pending.map(async (p) => {
           setPending((arr) =>
             arr.map((x) => (x.id === p.id ? { ...x, uploading: true } : x))
           );
-          const design = await addDesign(p.name, p.file, p.sku);
-          if (design) success++;
-          setPending((arr) =>
-            arr.map((x) =>
-              x.id === p.id ? { ...x, uploading: false, done: !!design } : x
-            )
-          );
+          try {
+            const design = await addDesign(p.name, p.file, p.sku);
+            if (design) success++;
+            setPending((arr) =>
+              arr.map((x) =>
+                x.id === p.id
+                  ? { ...x, uploading: false, done: !!design }
+                  : x
+              )
+            );
+          } catch (err) {
+            const msg =
+              err instanceof Error ? err.message : "Bilinmeyen hata";
+            errors.push(`${p.name}: ${msg}`);
+            setPending((arr) =>
+              arr.map((x) =>
+                x.id === p.id
+                  ? { ...x, uploading: false, done: false }
+                  : x
+              )
+            );
+          }
         })
       );
       if (success > 0) {
@@ -76,10 +92,17 @@ export default function YusufPage() {
           `${success} tasarım yüklendi. Durum: SEO Bekliyor — Kerim'in listesine düştü.`
         );
         setTimeout(() => {
-          setPending([]);
+          setPending((arr) => arr.filter((x) => !x.done));
         }, 700);
-      } else {
-        toast.error("Yükleme başarısız. Konsolu kontrol et.");
+      }
+      if (errors.length > 0) {
+        toast.error(errors[0], {
+          description:
+            errors.length > 1
+              ? `+${errors.length - 1} başka hata. Detay için konsolu aç.`
+              : undefined,
+          duration: 10_000,
+        });
       }
     } finally {
       setSaving(false);

@@ -115,16 +115,20 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
   addDesign: async (name, file, sku) => {
     set({ uploading: true });
+    let uploadedPath: string | null = null;
     try {
-      const path = await uploadImage(file, "originals");
+      uploadedPath = await uploadImage(file, "originals");
+      const payload: Record<string, unknown> = {
+        name: name.trim() || "Untitled Design",
+        status: "SEO Bekliyor" as DesignStatus,
+        original_image_path: uploadedPath,
+      };
+      const trimmedSku = sku?.trim();
+      if (trimmedSku) payload.sku = trimmedSku;
+
       const { data, error } = await supabase
         .from("designs")
-        .insert({
-          name: name.trim() || "Untitled Design",
-          sku: sku?.trim() || null,
-          status: "SEO Bekliyor" as DesignStatus,
-          original_image_path: path,
-        })
+        .insert(payload)
         .select("*")
         .single();
       if (error) throw error;
@@ -136,7 +140,12 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       return design;
     } catch (e) {
       console.error("[addDesign]", e);
-      return null;
+      if (uploadedPath) await removeImage(uploadedPath);
+      const message =
+        e && typeof e === "object" && "message" in e
+          ? String((e as { message: unknown }).message)
+          : String(e);
+      throw new Error(message);
     } finally {
       set({ uploading: false });
     }
