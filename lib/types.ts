@@ -1,6 +1,7 @@
 export type DesignStatus =
   | "SEO Bekliyor"
   | "Mockup ve Yayınlama Bekliyor"
+  | "Taslak"
   | "Aktif Mağaza";
 
 export interface SeoData {
@@ -25,6 +26,7 @@ export interface MockupAsset {
 export interface Design {
   id: string;
   name: string;
+  sku?: string;
   status: DesignStatus;
   createdAt: string;
   publishedAt?: string;
@@ -39,6 +41,7 @@ export interface Design {
 export interface DesignRow {
   id: string;
   name: string;
+  sku: string | null;
   status: DesignStatus;
   original_image_path: string;
   mockup_image_paths: string[] | null;
@@ -58,6 +61,90 @@ function num(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
   const n = typeof v === "string" ? parseFloat(v) : v;
   return Number.isFinite(n) ? n : null;
+}
+
+// ============================================================
+// Orders (Etsy)
+// ============================================================
+export type OrderStatus =
+  | "paid"
+  | "processing"
+  | "shipped"
+  | "completed"
+  | "canceled"
+  | "refunded";
+
+export interface Order {
+  id: string;
+  etsyReceiptId: string;
+  etsyTransactionId?: string;
+  orderNumber?: string;
+  customerName?: string;
+  customerCountry?: string;
+  orderDate?: string;
+  status: OrderStatus;
+  productTitle?: string;
+  productSku?: string;
+  productImageUrl?: string;
+  listingId?: string;
+  quantity: number;
+  totalPrice?: number;
+  currency: string;
+  designId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderRow {
+  id: string;
+  etsy_receipt_id: string;
+  etsy_transaction_id: string | null;
+  order_number: string | null;
+  customer_name: string | null;
+  customer_country: string | null;
+  order_date: string | null;
+  status: OrderStatus;
+  product_title: string | null;
+  product_sku: string | null;
+  product_image_url: string | null;
+  listing_id: string | null;
+  quantity: number;
+  total_price: string | number | null;
+  currency: string | null;
+  raw_payload: unknown;
+  design_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function rowToOrder(row: OrderRow): Order {
+  const totalRaw = row.total_price;
+  const totalNum =
+    totalRaw === null || totalRaw === undefined
+      ? undefined
+      : typeof totalRaw === "string"
+        ? parseFloat(totalRaw)
+        : totalRaw;
+  return {
+    id: row.id,
+    etsyReceiptId: row.etsy_receipt_id,
+    etsyTransactionId: row.etsy_transaction_id ?? undefined,
+    orderNumber: row.order_number ?? undefined,
+    customerName: row.customer_name ?? undefined,
+    customerCountry: row.customer_country ?? undefined,
+    orderDate: row.order_date ?? undefined,
+    status: row.status,
+    productTitle: row.product_title ?? undefined,
+    productSku: row.product_sku ?? undefined,
+    productImageUrl: row.product_image_url ?? undefined,
+    listingId: row.listing_id ?? undefined,
+    quantity: row.quantity ?? 1,
+    totalPrice: Number.isFinite(totalNum) ? (totalNum as number) : undefined,
+    currency: row.currency ?? "USD",
+    designId: row.design_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export function rowToDesign(
@@ -95,6 +182,7 @@ export function rowToDesign(
   return {
     id: row.id,
     name: row.name,
+    sku: row.sku ?? undefined,
     status: row.status,
     createdAt: row.created_at,
     publishedAt: row.published_at ?? undefined,

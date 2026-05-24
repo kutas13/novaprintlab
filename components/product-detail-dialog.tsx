@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Hash,
 } from "lucide-react";
 import { format } from "date-fns";
 import { tr } from "date-fns/locale";
@@ -102,6 +103,12 @@ export function ProductDetailDialog({
               <Package className="h-5 w-5 text-rose-400" /> {design.name}
             </DialogTitle>
             <StatusBadge status={design.status} />
+            {design.sku && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 text-[11px] font-mono text-slate-300 border border-slate-700">
+                <Hash className="h-3 w-3" />
+                {design.sku}
+              </span>
+            )}
           </div>
           <DialogDescription className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mt-1">
             {design.publishedAt && (

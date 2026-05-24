@@ -88,9 +88,16 @@ export function ArchiveCard({ design }: { design: Design }) {
         </div>
       </div>
       <div className="p-3 space-y-1.5">
-        <p className="font-medium text-sm truncate" title={design.name}>
-          {design.name}
-        </p>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="font-medium text-sm truncate flex-1" title={design.name}>
+            {design.name}
+          </p>
+          {design.sku && (
+            <span className="shrink-0 text-[10px] font-mono text-slate-400 bg-slate-800/80 rounded px-1.5 py-0.5">
+              {design.sku}
+            </span>
+          )}
+        </div>
         <div className="flex items-center justify-between text-[11px] text-slate-500">
           <span>
             {design.publishedAt &&

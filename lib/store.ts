@@ -24,11 +24,13 @@ interface DesignState {
   initialize: () => Promise<void>;
   refresh: () => Promise<void>;
 
-  addDesign: (name: string, file: File) => Promise<Design | null>;
+  addDesign: (name: string, file: File, sku?: string) => Promise<Design | null>;
   updateSeo: (id: string, seo: SeoData) => Promise<void>;
+  updateSku: (id: string, sku: string) => Promise<void>;
   updatePricing: (id: string, pricing: PricingData) => Promise<void>;
   addMockups: (id: string, files: File[]) => Promise<void>;
   removeMockup: (id: string, path: string) => Promise<void>;
+  saveAsDraft: (id: string) => Promise<void>;
   publishDesign: (id: string) => Promise<void>;
   setStatus: (id: string, status: DesignStatus) => Promise<void>;
   deleteDesign: (id: string) => Promise<void>;
@@ -48,7 +50,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   loading: false,
   uploading: false,
   initialized: false,
-  dailyTarget: 2,
+  dailyTarget: 10,
 
   setDailyTarget: (n) => set({ dailyTarget: Math.max(1, n) }),
 
@@ -111,7 +113,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     set({ designs: rowsToDesigns(data as DesignRow[]) });
   },
 
-  addDesign: async (name, file) => {
+  addDesign: async (name, file, sku) => {
     set({ uploading: true });
     try {
       const path = await uploadImage(file, "originals");
@@ -119,6 +121,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
         .from("designs")
         .insert({
           name: name.trim() || "Untitled Design",
+          sku: sku?.trim() || null,
           status: "SEO Bekliyor" as DesignStatus,
           original_image_path: path,
         })
@@ -149,6 +152,21 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     const { data, error } = await supabase
       .from("designs")
       .update(patch)
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error) throw error;
+    const next = rowToDesign(data as DesignRow, publicUrl);
+    set((s) => ({
+      designs: s.designs.map((d) => (d.id === id ? next : d)),
+    }));
+  },
+
+  updateSku: async (id, sku) => {
+    const value = sku.trim() || null;
+    const { data, error } = await supabase
+      .from("designs")
+      .update({ sku: value })
       .eq("id", id)
       .select("*")
       .single();
@@ -225,6 +243,23 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       .single();
     if (error) throw error;
     await removeImage(path);
+    const next = rowToDesign(data as DesignRow, publicUrl);
+    set((s) => ({
+      designs: s.designs.map((d) => (d.id === id ? next : d)),
+    }));
+  },
+
+  saveAsDraft: async (id) => {
+    const { data, error } = await supabase
+      .from("designs")
+      .update({
+        status: "Taslak" as DesignStatus,
+        published_at: null,
+      })
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error) throw error;
     const next = rowToDesign(data as DesignRow, publicUrl);
     set((s) => ({
       designs: s.designs.map((d) => (d.id === id ? next : d)),

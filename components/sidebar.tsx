@@ -10,6 +10,8 @@ import {
   LogOut,
   Palette,
   Package,
+  FileEdit,
+  ShoppingBag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -20,6 +22,12 @@ const NAV = [
     href: "/dashboard",
     icon: CalendarDays,
     accent: "from-blue-500 to-cyan-500",
+  },
+  {
+    label: "Siparişler",
+    href: "/dashboard/siparisler",
+    icon: ShoppingBag,
+    accent: "from-cyan-500 to-blue-600",
   },
   {
     label: "Yusuf — Tasarım Yükle",
@@ -38,6 +46,12 @@ const NAV = [
     href: "/dashboard/taha",
     icon: ImageIcon,
     accent: "from-amber-500 to-orange-500",
+  },
+  {
+    label: "Taslaklar",
+    href: "/dashboard/taslaklar",
+    icon: FileEdit,
+    accent: "from-violet-500 to-fuchsia-500",
   },
   {
     label: "Ürünler — Aktif Mağaza",

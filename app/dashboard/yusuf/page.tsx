@@ -14,6 +14,7 @@ import { useDesignStore } from "@/lib/store";
 interface Pending {
   id: string;
   name: string;
+  sku: string;
   file: File;
   previewUrl: string;
   uploading?: boolean;
@@ -44,6 +45,7 @@ export default function YusufPage() {
     const next: Pending[] = files.map((f) => ({
       id: uid(),
       name: f.name.replace(/\.(png|jpe?g|webp)$/i, ""),
+      sku: "",
       file: f,
       previewUrl: URL.createObjectURL(f),
     }));
@@ -60,7 +62,7 @@ export default function YusufPage() {
           setPending((arr) =>
             arr.map((x) => (x.id === p.id ? { ...x, uploading: true } : x))
           );
-          const design = await addDesign(p.name, p.file);
+          const design = await addDesign(p.name, p.file, p.sku);
           if (design) success++;
           setPending((arr) =>
             arr.map((x) =>
@@ -168,6 +170,21 @@ export default function YusufPage() {
                     disabled={saving}
                     className="bg-slate-950 border-slate-800 text-sm"
                     placeholder="Tasarım adı"
+                  />
+                  <Input
+                    value={p.sku}
+                    onChange={(e) =>
+                      setPending((arr) =>
+                        arr.map((x) =>
+                          x.id === p.id
+                            ? { ...x, sku: e.target.value.toUpperCase() }
+                            : x
+                        )
+                      )
+                    }
+                    disabled={saving}
+                    className="bg-slate-950 border-slate-800 text-xs font-mono uppercase tracking-wider"
+                    placeholder="SKU (örn. NPL-001)"
                   />
                   <p className="text-[11px] text-slate-500 truncate">
                     {(p.file.size / 1024).toFixed(0)} KB
