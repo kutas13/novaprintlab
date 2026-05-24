@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   fetchListingImagesMap,
   fetchReceipts,
-  readEtsyEnv,
+  getEtsyAuth,
   receiptToOrderRows,
   type OrderUpsertRow,
 } from "@/lib/etsy";
@@ -20,10 +20,10 @@ interface SyncResponse {
 }
 
 async function runSync(limitParam: number | null) {
-  const env = readEtsyEnv();
+  const env = await getEtsyAuth();
   if ("error" in env) {
     return NextResponse.json<SyncResponse>(
-      { ok: false, error: env.error, setupRequired: true },
+      { ok: false, error: env.error, setupRequired: !!env.setupRequired },
       { status: 400 }
     );
   }

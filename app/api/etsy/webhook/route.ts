@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   fetchListingImagesMap,
-  readEtsyEnv,
+  getEtsyAuth,
   receiptToOrderRows,
   type EtsyReceipt,
   type OrderUpsertRow,
@@ -153,7 +153,7 @@ export async function GET() {
 async function coerceEtsyReceipts(
   receipts: EtsyReceipt[]
 ): Promise<OrderUpsertRow[]> {
-  const env = readEtsyEnv();
+  const env = await getEtsyAuth();
   let imageMap = new Map<number, string>();
   if (!("error" in env)) {
     const ids = receipts.flatMap(

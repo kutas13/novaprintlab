@@ -184,6 +184,33 @@ begin
 end $$;
 
 -- ============================================================
--- Done. You should now see the 'designs' + 'orders' tables and
--- the 'designs' storage bucket in the Supabase Dashboard.
+-- 8) etsy_credentials table (OAuth tokens — server-only) ------
+-- ============================================================
+create table if not exists public.etsy_credentials (
+  id integer primary key default 1 check (id = 1),
+
+  access_token  text not null,
+  refresh_token text not null,
+  access_token_expires_at timestamptz not null,
+
+  shop_id   text,
+  shop_name text,
+  user_id   text,
+  scope     text,
+
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists etsy_credentials_touch_updated_at on public.etsy_credentials;
+create trigger etsy_credentials_touch_updated_at
+  before update on public.etsy_credentials
+  for each row execute function public.touch_updated_at();
+
+-- RLS on, NO policies → only service_role can read/write.
+alter table public.etsy_credentials enable row level security;
+drop policy if exists "etsy_credentials anon all" on public.etsy_credentials;
+
+-- ============================================================
+-- Done. Tables: designs, orders, etsy_credentials.
+-- Storage bucket: designs (public).
 -- ============================================================

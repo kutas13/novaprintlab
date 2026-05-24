@@ -2,6 +2,7 @@
 // Used by /api/etsy/sync and /api/etsy/webhook on the server only.
 // NEVER import this from a client component.
 
+import { resolveEtsyAuth, type ResolvedAuth } from "./etsy-auth";
 import type { OrderStatus } from "./types";
 
 const ETSY_BASE = "https://openapi.etsy.com/v3/application";
@@ -12,15 +13,12 @@ export interface EtsyEnv {
   accessToken: string;
 }
 
-export function readEtsyEnv(): EtsyEnv | { error: string } {
-  const apiKey = process.env.ETSY_API_KEY?.trim();
-  const shopId = process.env.ETSY_SHOP_ID?.trim();
-  const accessToken = process.env.ETSY_ACCESS_TOKEN?.trim();
-  if (!apiKey) return { error: "ETSY_API_KEY environment variable is missing." };
-  if (!shopId) return { error: "ETSY_SHOP_ID environment variable is missing." };
-  if (!accessToken)
-    return { error: "ETSY_ACCESS_TOKEN environment variable is missing." };
-  return { apiKey, shopId, accessToken };
+/** Preferred resolver — checks the OAuth-stored credentials first, then falls
+ *  back to legacy env vars, and auto-refreshes expired access tokens. */
+export async function getEtsyAuth(): Promise<
+  ResolvedAuth | { error: string; setupRequired?: boolean }
+> {
+  return resolveEtsyAuth();
 }
 
 export interface EtsyMoney {

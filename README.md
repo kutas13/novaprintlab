@@ -2,77 +2,78 @@
 
 3 ortaklı bir Etsy Print-on-Demand ekibinin iç iş akışını yöneten, yapay zekâ destekli SaaS panel.
 
-- **Yusuf**: Ham tasarımları yükler ve SKU atar.
-- **Kerim**: AI (görsel analizli) ile SEO başlık/açıklama/etiketleri üretir.
-- **Taha**: Mockup hazırlar, kâr hesaplar, Etsy'de yayınlar (veya taslağa kaydeder).
-- **Siparişler**: Etsy'den gelen tüm siparişler tek tabloda; SKU eşleşen tasarımlar tek tıkla yüksek çözünürlüklü PNG olarak iner.
+- **Yusuf** — Ham tasarımları yükler, SKU atar.
+- **Kerim** — AI (görsel analizli) ile SEO başlık/açıklama/etiket üretir.
+- **Taha** — Mockup hazırlar, kâr hesaplar, Etsy'de yayınlar (veya taslağa kaydeder).
+- **Siparişler** — Etsy'den gelen siparişler tek tabloda; SKU eşleşen tasarımlar tek tıkla yüksek çözünürlüklü PNG iner.
 
-## Tech Stack
+## Tech
 
-- Next.js 14 (App Router)
-- TypeScript + Tailwind CSS + Shadcn/ui (Slate/Zinc dark mode)
-- Supabase (Postgres + Storage + Realtime)
-- Zustand (UI state + realtime store)
-- OpenAI API (GPT-4o-mini Vision) — SEO üretimi
-- Etsy API v3 — Sipariş senkronizasyonu
+Next.js 14 · TypeScript · Tailwind + Shadcn/ui · Supabase (Postgres + Storage + Realtime) · Zustand · OpenAI GPT-4o-mini Vision · Etsy API v3
 
-## Login
+---
 
-Sabit (hardcoded) kimlik bilgileri — `lib/auth.ts`. Session HttpOnly cookie ile tutulur, `/dashboard/*` rotaları middleware ile korunur.
+## Hızlı Kurulum (Vercel'e deploy ettikten sonra)
 
-## Kurulum
+### 1. Supabase'de tabloları oluştur
 
-```bash
-npm install
-cp .env.example .env.local      # değerleri doldurun
-# Supabase Dashboard → SQL Editor → supabase/schema.sql çalıştırın
-# (mevcut bir kurulum için: supabase/migrations/20260524_orders.sql çalıştırın)
-npm run dev
-```
+Supabase Dashboard → SQL Editor → New Query → aşağıdaki dosyaları sırayla çalıştır:
 
-`http://localhost:3000` — login → dashboard.
+- İlk kurulumsa: `supabase/schema.sql` (tüm tablolar)
+- Mevcut bir kurulum için: önce `supabase/migrations/20260524_orders.sql`, sonra `supabase/migrations/20260524_etsy_credentials.sql`
 
-## Environment Variables
+### 2. Vercel'e env değişkenlerini ekle
 
-| Key                              | Açıklama                                                                       |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| `NEXT_PUBLIC_SUPABASE_URL`       | Supabase proje URL'i                                                           |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY`  | Supabase anon public key                                                       |
-| `SUPABASE_SERVICE_ROLE_KEY`      | (Ops) Server route'larının RLS'i bypass etmesi için. Yoksa anon key fallback.  |
-| `OPENAI_API_KEY`                 | Kerim'in AI SEO çağrısı için                                                   |
-| `ETSY_API_KEY`                   | Etsy Developer app → keystring                                                 |
-| `ETSY_SHOP_ID`                   | Mağazanın numeric ID'si                                                        |
-| `ETSY_ACCESS_TOKEN`              | OAuth 2.0 bearer token (1 saatte sonra süresi dolar — yeniden üretmek gerekir) |
-| `ETSY_WEBHOOK_SECRET`            | (Ops) `/api/etsy/webhook`'a gelen POST'lar için zorunlu `x-webhook-secret`     |
+**Vercel Dashboard → Project → Settings → Environment Variables**. Production + Preview olarak ikisine de ekle:
 
-## Siparişler — Etsy API v3 Entegrasyonu
+| Değişken | Nereden alınır |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase Dashboard → Settings → API → "Project URL" |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Settings → API → "anon public" |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase Dashboard → Settings → API → "service_role" (👁 reveal) |
+| `OPENAI_API_KEY` | platform.openai.com → API Keys |
+| `ETSY_API_KEY` | Aşağıda anlatılıyor 👇 |
 
-### Adım 1: Etsy Developer App oluştur
+> `SUPABASE_SERVICE_ROLE_KEY` Etsy OAuth token storage'ı için gereklidir — bu **gizli anahtar**, kimseyle paylaşma, sadece server-side route'larda kullanılır.
 
-1. <https://www.etsy.com/developers/your-apps> — yeni app aç, **keystring**'i kopyala → `ETSY_API_KEY`.
-2. Etsy OAuth 2.0 (PKCE) ile bir access token üret. Pratik bir yol: [`@etsyhttps/etsy-api-v3-client`](https://www.npmjs.com/package/@etsyhttps/etsy-api-v3-client) veya Etsy'nin kendi [OAuth dokümanı](https://developers.etsy.com/documentation/essentials/authentication). Üretilen access token'ı `ETSY_ACCESS_TOKEN`'a yaz.
-3. Mağaza ID'sini al: `GET https://openapi.etsy.com/v3/application/users/{user_id}/shops` → `ETSY_SHOP_ID`.
+Env eklediğinde Vercel'in **Redeploy** etmesi gerekir (Project → Deployments → en üstteki deploy → "Redeploy").
 
-### Adım 2: Senkronla
+### 3. Etsy Developer App oluştur
 
-Dashboard'da **Siparişler → Etsy ile Senkronla** butonu son 50 receipt'i çeker, her transaction'ı (ürün satırı) ayrı sipariş satırı olarak yazar. SKU eşleşmesi otomatiktir: Yusuf'un `designs.sku` değeri Etsy listing'inin SKU'suyla aynı yazılırsa "Tasarımı İndir" butonu o satırda aktifleşir.
+1. <https://www.etsy.com/developers/your-apps> sayfasına Etsy hesabınla giriş yap.
+2. **Create a New App** → kısa form (app adı, açıklama).
+3. Onay genelde anında, bazen birkaç saat sürebilir. Onay sonrası app sayfası açılır.
+4. Sayfada **Keystring** alanı görünür — bu senin `ETSY_API_KEY` değerin. Vercel'e ekle.
+5. Aynı sayfada **Callback URL** alanı var. Buraya iki URL ekle (Etsy birden fazla destekler):
+   ```
+   https://novaprintlab.vercel.app/api/etsy/oauth/callback
+   http://localhost:3000/api/etsy/oauth/callback
+   ```
+   (İlkini kendi prod domain'inle değiştir — Vercel'in dashboard'unda gözüküyor.)
+6. Save.
 
-Otomatik senkron istersen Vercel Cron veya GitHub Actions ile dakikalık `POST /api/etsy/sync` çağrısı kur.
+### 4. Uygulamada bağlan
 
-### Adım 3 (opsiyonel): Webhook ile push
+Vercel deploy bittikten sonra:
 
-Etsy'nin yerli "her sipariş için webhook" özelliği yok. Bunun yerine:
+1. `https://<senin-domain>/dashboard/siparisler` aç.
+2. Üstteki **"Etsy ile Bağlan"** kartında butona tıkla.
+3. Etsy seni izin sayfasına götürür → **Allow Access** de.
+4. Geri panelimize dönersin. Kart artık **yeşil "Bağlı"** olur, mağaza adın görünür.
+5. Sağ üstteki **"Etsy ile Senkronla"** butonuna bas → siparişler düşmeye başlar.
 
-- Bir middleware (Zapier, Make, kendi serverless'in) Etsy'den polling yapar
-- Yeni siparişi `POST /api/etsy/webhook` adresimize iletir
+Token süresi 1 saatte dolar ama uygulama **otomatik yeniler** — bir daha bağlanman gerekmez (kullanıcı Etsy şifresini değiştirmediği sürece).
 
-Payload iki şekilde kabul edilir:
+### 5. (Ops) Webhook ile push
+
+Etsy'nin native webhook sistemi siparişler için yok. Eğer Zapier/Make/kendi serverless'inle her yeni siparişi anında bize push'lamak istersen `POST /api/etsy/webhook` endpoint'ini kullan.
+
+`ETSY_WEBHOOK_SECRET` env var'ı set edersen her POST'a `x-webhook-secret: <value>` header'ı eklemen gerekir. Aksi takdirde endpoint açık olur (URL'in gizli olduğu varsayımıyla).
+
+Payload formatı:
 
 ```jsonc
-// 1) Doğrudan Etsy receipt objesi (veya { receipts: [...] } zarfı)
-{ "receipt_id": 123, "name": "Jane Doe", "country_iso": "US", ... }
-
-// 2) Sadeleştirilmiş manuel format (test için kullanışlı)
+// Sade manuel format (test ve Zapier için)
 {
   "receipt_id": "1234",
   "order_number": "#1234",
@@ -92,12 +93,32 @@ Payload iki şekilde kabul edilir:
 }
 ```
 
-`ETSY_WEBHOOK_SECRET` ayarlıysa her POST `x-webhook-secret: <secret>` header'ı taşımalıdır, aksi takdirde 401 döner.
+Veya doğrudan native Etsy receipt object'ini POST'la (uygulama ayırt eder).
+
+---
+
+## Login
+
+Sabit (hardcoded) kimlik bilgileri `lib/auth.ts` içinde. Session HttpOnly cookie, `/dashboard/*` rotaları middleware ile korunur.
+
+## Lokal geliştirme
+
+```bash
+npm install
+cp .env.example .env.local      # değerleri doldur
+# Supabase Dashboard'da schema/migration'ı çalıştır (yukarıdaki Adım 1)
+npm run dev
+```
+
+`http://localhost:3000` → login → dashboard.
+
+Lokal'de Etsy bağlantısı için Etsy Developer App'inde `http://localhost:3000/api/etsy/oauth/callback` URL'inin de kayıtlı olması yeterlidir.
 
 ## Mimari Notlar
 
-- Veri katmanı: Supabase Postgres (`public.designs`, `public.orders`). Tüm state Zustand store'larıyla cache'lenir, Realtime kanalları (`designs-realtime`, `orders-realtime`) ile 3 ortağın ekranı eş zamanlı senkronizedir.
-- Görsel storage: `designs` public bucket. SKU eşleşmesi anında public URL'den fetch → blob → otomatik indirme.
+- Veri: Supabase Postgres (`public.designs`, `public.orders`, `public.etsy_credentials`). Her tablo Zustand store'da cache'lenir, Realtime kanallarıyla 3 ortağın ekranı eş zamanlı senkronizedir.
+- Görsel storage: `designs` public bucket. SKU eşleşmesi anında public URL → blob → otomatik indirme.
 - Status akışı (tasarım): `SEO Bekliyor` → `Mockup ve Yayınlama Bekliyor` → (`Taslak` ↔ `Aktif Mağaza`).
 - Status akışı (sipariş): `paid` → `processing` → `shipped` → `completed` (`canceled` / `refunded` kollarıyla).
-- Tasarım eşleştirme `lib/orders-store.ts` + `components/orders-table.tsx` içinde, **case-insensitive SKU** ile yapılır. Senkron sırasında DB'de `orders.design_id` foreign key'i de doldurulur (rapor ve gelecek özellikler için).
+- SKU eşleştirme `lib/orders-store.ts` + `components/orders-table.tsx` içinde, **case-insensitive** ve trim'li. Senkron sırasında DB'de `orders.design_id` foreign key'i de doldurulur.
+- Etsy OAuth: PKCE flow, refresh token rotasyonlu, server-side `etsy_credentials` tablosunda saklanır (RLS sıkı, sadece service_role erişebilir).

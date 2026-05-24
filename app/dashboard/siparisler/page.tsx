@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OrdersTable } from "@/components/orders-table";
+import { EtsyConnectCard } from "@/components/etsy-connect-card";
 import { useOrdersStore } from "@/lib/orders-store";
 
 export default function SiparislerPage() {
@@ -51,6 +52,10 @@ export default function SiparislerPage() {
           {syncing ? "Senkronlanıyor…" : "Etsy ile Senkronla"}
         </Button>
       </PageHeader>
+
+      <div className="mb-6">
+        <EtsyConnectCard />
+      </div>
 
       <OrdersTable />
     </div>
