@@ -78,6 +78,24 @@
     border: 1px solid rgba(148, 163, 184, 0.12);
   }
 
+  /* On phones, backdrop-filter is a major GPU drain (mobile-nav,
+   * sidebar, and login card all repaint every scroll frame). Fall back
+   * to opaque surfaces below the sm breakpoint — visually nearly
+   * identical on small screens but dramatically faster first paint and
+   * smoother scrolling. */
+  @media (max-width: 640px) {
+    .glass {
+      background: rgba(15, 23, 42, 0.94);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .glass-strong {
+      background: rgba(15, 23, 42, 0.97);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+  }
+
   .text-gradient {
     background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%);
     -webkit-background-clip: text;

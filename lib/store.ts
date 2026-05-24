@@ -97,10 +97,24 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
                 // unchanged columns (the SEO blob disappearing after a
                 // pricing update was caused by this). Preserve any rich
                 // field the realtime event left null/empty but we already
-                // hold locally.
+                // hold locally. Merge SEO at field-level so we don't lose
+                // attributes / description when only title arrives etc.
+                const mergedSeo =
+                  next.seo || d.seo
+                    ? {
+                        title: next.seo?.title || d.seo?.title || "",
+                        description:
+                          next.seo?.description || d.seo?.description || "",
+                        tags: next.seo?.tags?.length
+                          ? next.seo.tags
+                          : (d.seo?.tags ?? []),
+                        attributes:
+                          next.seo?.attributes ?? d.seo?.attributes,
+                      }
+                    : undefined;
                 return {
                   ...next,
-                  seo: next.seo ?? d.seo,
+                  seo: mergedSeo,
                   pricing: next.pricing ?? d.pricing,
                   mockups:
                     next.mockups.length > 0
@@ -175,6 +189,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       seo_title: seo.title,
       seo_description: seo.description,
       seo_tags: seo.tags,
+      seo_attributes: seo.attributes ?? null,
       status: "Mockup ve Yayınlama Bekliyor" as DesignStatus,
     };
     const { error } = await supabase.from("designs").update(patch).eq("id", id);
@@ -185,7 +200,12 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
           ? {
               ...d,
               status: "Mockup ve Yayınlama Bekliyor",
-              seo: { title: seo.title, description: seo.description, tags: seo.tags },
+              seo: {
+                title: seo.title,
+                description: seo.description,
+                tags: seo.tags,
+                attributes: seo.attributes,
+              },
             }
           : d
       ),

@@ -4,10 +4,22 @@ export type DesignStatus =
   | "Taslak"
   | "Aktif Mağaza";
 
+/** Etsy listing attribute fields (the 4 dropdowns Etsy shows under
+ * "Listeleme özellikleri" for apparel): Giyim tarzı, Vekalet (Occasion),
+ * Tatil, Grafik. The AI fills these in based on the design image so the
+ * partner just has to copy them into Etsy. */
+export interface EtsyAttributes {
+  clothingStyle?: string;
+  occasion?: string;
+  holiday?: string;
+  graphic?: string;
+}
+
 export interface SeoData {
   title: string;
   description: string;
   tags: string[];
+  attributes?: EtsyAttributes;
 }
 
 export interface PricingData {
@@ -48,6 +60,7 @@ export interface DesignRow {
   seo_title: string | null;
   seo_description: string | null;
   seo_tags: string[] | null;
+  seo_attributes: EtsyAttributes | null;
   pricing_printify_cost: string | number | null;
   pricing_shipping_cost: string | number | null;
   pricing_target_profit: string | number | null;
@@ -151,12 +164,20 @@ export function rowToDesign(
   row: DesignRow,
   publicUrl: (p: string | null | undefined) => string
 ): Design {
+  const attrs = row.seo_attributes ?? undefined;
+  const hasAttrs =
+    attrs &&
+    (attrs.clothingStyle || attrs.occasion || attrs.holiday || attrs.graphic);
   const seo: SeoData | undefined =
-    row.seo_title || row.seo_description || (row.seo_tags && row.seo_tags.length)
+    row.seo_title ||
+    row.seo_description ||
+    (row.seo_tags && row.seo_tags.length) ||
+    hasAttrs
       ? {
           title: row.seo_title ?? "",
           description: row.seo_description ?? "",
           tags: row.seo_tags ?? [],
+          attributes: hasAttrs ? attrs : undefined,
         }
       : undefined;
 

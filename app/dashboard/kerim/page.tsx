@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/dialog";
 import { useDesignStore } from "@/lib/store";
 import { DesignActions } from "@/components/design-actions";
-import type { Design, SeoData } from "@/lib/types";
+import type { Design, EtsyAttributes, SeoData } from "@/lib/types";
+import { ListChecks } from "lucide-react";
 
 export default function KerimPage() {
   const [mounted, setMounted] = useState(false);
@@ -109,6 +110,12 @@ function SeoDialog({
       ? design.seo.tags
       : Array(13).fill("")
   );
+  const [attrs, setAttrs] = useState<EtsyAttributes>({
+    clothingStyle: design.seo?.attributes?.clothingStyle ?? "",
+    occasion: design.seo?.attributes?.occasion ?? "",
+    holiday: design.seo?.attributes?.holiday ?? "",
+    graphic: design.seo?.attributes?.graphic ?? "",
+  });
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -134,6 +141,14 @@ function SeoDialog({
       const next = [...data.tags];
       while (next.length < 13) next.push("");
       setTags(next.slice(0, 13));
+      if (data.attributes) {
+        setAttrs({
+          clothingStyle: data.attributes.clothingStyle ?? "",
+          occasion: data.attributes.occasion ?? "",
+          holiday: data.attributes.holiday ?? "",
+          graphic: data.attributes.graphic ?? "",
+        });
+      }
       toast.success("AI içerik üretildi. Kontrol edip kaydedebilirsin.");
     } catch {
       toast.error("AI isteği gönderilemedi.");
@@ -149,6 +164,13 @@ function SeoDialog({
     }
     setSaving(true);
     try {
+      const cleanAttrs: EtsyAttributes = {
+        clothingStyle: attrs.clothingStyle?.trim() || undefined,
+        occasion: attrs.occasion?.trim() || undefined,
+        holiday: attrs.holiday?.trim() || undefined,
+        graphic: attrs.graphic?.trim() || undefined,
+      };
+      const hasAttrs = Object.values(cleanAttrs).some(Boolean);
       await onSave({
         title: title.trim().slice(0, 140),
         description: description.trim(),
@@ -156,6 +178,7 @@ function SeoDialog({
           .map((t) => t.trim().toLowerCase())
           .filter(Boolean)
           .slice(0, 13),
+        attributes: hasAttrs ? cleanAttrs : undefined,
       });
     } finally {
       setSaving(false);
@@ -249,6 +272,60 @@ function SeoDialog({
             <Separator className="bg-slate-800" />
 
             <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ListChecks className="h-4 w-4 text-cyan-400" />
+                <Label className="text-sm">Etsy Listeleme Özellikleri</Label>
+                <span className="text-[10px] text-slate-500">
+                  ({
+                    [attrs.clothingStyle, attrs.occasion, attrs.holiday, attrs.graphic].filter(
+                      (v) => v && v.trim()
+                    ).length
+                  } / 4)
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 -mt-1">
+                Etsy listeleme formundaki 4 dropdown için AI önerisi. Taha &
+                ekip Etsy'de bu değerleri seçecek; istersen düzenle.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <AttrInput
+                  label="Giyim tarzı"
+                  hint="Clothing style"
+                  placeholder="Örn. T-shirt, Hoodie, Sweatshirt"
+                  value={attrs.clothingStyle ?? ""}
+                  onChange={(v) => setAttrs((a) => ({ ...a, clothingStyle: v }))}
+                  disabled={saving}
+                />
+                <AttrInput
+                  label="Vekalet"
+                  hint="Occasion"
+                  placeholder="Örn. Birthday, Christmas, Wedding"
+                  value={attrs.occasion ?? ""}
+                  onChange={(v) => setAttrs((a) => ({ ...a, occasion: v }))}
+                  disabled={saving}
+                />
+                <AttrInput
+                  label="Tatil"
+                  hint="Holiday"
+                  placeholder="Örn. Christmas, Halloween, Easter"
+                  value={attrs.holiday ?? ""}
+                  onChange={(v) => setAttrs((a) => ({ ...a, holiday: v }))}
+                  disabled={saving}
+                />
+                <AttrInput
+                  label="Grafik"
+                  hint="Graphic"
+                  placeholder="Örn. Floral, Quote, Animal, Vintage"
+                  value={attrs.graphic ?? ""}
+                  onChange={(v) => setAttrs((a) => ({ ...a, graphic: v }))}
+                  disabled={saving}
+                />
+              </div>
+            </div>
+
+            <Separator className="bg-slate-800" />
+
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Etiketler (13 adet)</Label>
                 <span className="text-xs text-slate-500">
@@ -321,6 +398,40 @@ function SeoDialog({
         <DesignActions design={design} variant="full" onActed={onClose} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AttrInput({
+  label,
+  hint,
+  placeholder,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  hint: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-[11px] flex items-baseline gap-1.5 uppercase tracking-wider text-slate-400 font-semibold">
+        {label}
+        <span className="text-[10px] text-slate-600 normal-case font-normal">
+          · {hint}
+        </span>
+      </Label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value.slice(0, 80))}
+        placeholder={placeholder}
+        disabled={disabled}
+        className="bg-slate-900 border-slate-800 h-9 text-xs"
+      />
+    </div>
   );
 }
 

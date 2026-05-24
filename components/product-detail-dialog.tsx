@@ -32,6 +32,7 @@ import { Design } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
 import { downloadUrl, extFromUrl, safeFilename } from "@/lib/download";
 import { DesignActions } from "@/components/design-actions";
+import { EtsyAttributesPanel } from "@/components/etsy-attributes-panel";
 
 export function ProductDetailDialog({
   design,
@@ -336,6 +337,8 @@ export function ProductDetailDialog({
                 </div>
               </div>
             )}
+
+            <EtsyAttributesPanel attributes={design.seo?.attributes} />
 
             {/* Pricing */}
             {design.pricing && (

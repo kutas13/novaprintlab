@@ -29,6 +29,7 @@ import { useDesignStore } from "@/lib/store";
 import type { Design, PricingData } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
 import { DesignActions } from "@/components/design-actions";
+import { EtsyAttributesPanel } from "@/components/etsy-attributes-panel";
 
 export function TahaDialog({
   design,
@@ -245,6 +246,8 @@ export function TahaDialog({
                 </div>
               </div>
             )}
+
+            <EtsyAttributesPanel attributes={current.seo?.attributes} />
           </div>
 
           <div className="space-y-4">

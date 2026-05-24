@@ -81,7 +81,14 @@ OUTPUT RULES (strict JSON, no markdown fences, no commentary):
    - No duplicates or plural-of-singular duplicates.
    - Cover: subject, style, audience, gift occasion, room/use, color/aesthetic, real Etsy search phrases.
 
-Return ONLY a JSON object with keys: title (string), description (string), tags (string[13]).`;
+4) attributes (object) — the 4 Etsy "Listing details" dropdowns the seller must fill in the Etsy listing form. Pick the SINGLE best value Etsy actually offers, ENGLISH, exactly as it appears in Etsy's dropdown (Title Case). Use null when nothing fits the design (e.g. holiday null for a generic floral shirt).
+
+   - clothingStyle: One of "T-shirt", "Sweatshirt", "Hoodie", "Long Sleeve Shirt", "Tank Top", "Crop Top", "Polo Shirt", "V-Neck Shirt", "Crewneck", "Baby Bodysuit", "Kids T-Shirt". Default to "T-shirt" for adult apparel designs. Use null for non-apparel.
+   - occasion: One of "Birthday", "Wedding", "Anniversary", "Baby Shower", "Bridal Shower", "Graduation", "Mother's Day", "Father's Day", "Valentine's Day", "Engagement", "Housewarming", "Retirement", "Bachelorette", "Bachelor Party", "Promotion", "New Job", "Christmas", "Easter", "Thanksgiving", "Halloween", "New Year's Eve", or null.
+   - holiday: One of "Christmas", "Halloween", "Thanksgiving", "Valentine's Day", "Easter", "Independence Day", "Mother's Day", "Father's Day", "New Year's Eve", "St. Patrick's Day", "Hanukkah", "Memorial Day", "Veterans Day", or null. Only set when the design is clearly themed around that holiday.
+   - graphic: One of "Floral", "Animal", "Quote", "Typography", "Vintage", "Retro", "Boho", "Minimalist", "Abstract", "Geometric", "Botanical", "Patriotic", "Holiday", "Cartoon", "Religious", "Sports", "Music", "Inspirational", "Funny", "Pop Culture", "Nature". Pick the single best match.
+
+Return ONLY a JSON object with keys: title (string), description (string), tags (string[13]), attributes (object with the 4 keys above).`;
 
 export async function POST(req: Request) {
   try {
@@ -148,7 +155,19 @@ export async function POST(req: Request) {
       );
     }
 
-    let parsed: { title?: string; description?: string; tags?: string[] };
+    interface ParsedSeo {
+      title?: string;
+      description?: string;
+      tags?: string[];
+      attributes?: {
+        clothingStyle?: string | null;
+        occasion?: string | null;
+        holiday?: string | null;
+        graphic?: string | null;
+      };
+    }
+
+    let parsed: ParsedSeo;
     try {
       parsed = JSON.parse(raw);
     } catch {
@@ -172,9 +191,24 @@ export async function POST(req: Request) {
       tags.push(`tag${tags.length + 1}`);
     }
 
+    const clean = (v: unknown): string | undefined => {
+      if (typeof v !== "string") return undefined;
+      const trimmed = v.trim();
+      if (!trimmed) return undefined;
+      if (/^(null|none|n\/a|-)$/i.test(trimmed)) return undefined;
+      return trimmed.slice(0, 80);
+    };
+
+    const attributes = {
+      clothingStyle: clean(parsed.attributes?.clothingStyle),
+      occasion: clean(parsed.attributes?.occasion),
+      holiday: clean(parsed.attributes?.holiday),
+      graphic: clean(parsed.attributes?.graphic),
+    };
+
     return NextResponse.json({
       ok: true,
-      data: { title, description, tags },
+      data: { title, description, tags, attributes },
     });
   } catch (err) {
     const message =

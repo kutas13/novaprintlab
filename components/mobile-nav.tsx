@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   CalendarDays,
   Upload,
@@ -27,13 +27,11 @@ const NAV = [
 
 export function MobileNav() {
   const pathname = usePathname();
-  const router = useRouter();
 
   const logout = async () => {
     await fetch("/api/logout", { method: "POST" });
     toast.success("Çıkış yapıldı.");
-    router.push("/login");
-    router.refresh();
+    window.location.replace("/login");
   };
 
   return (
