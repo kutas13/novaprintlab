@@ -160,6 +160,62 @@ export function rowToOrder(row: OrderRow): Order {
   };
 }
 
+// ============================================================
+// Expenses (Giderler)
+// ============================================================
+export type ExpenseOwner = "Yusuf" | "Kerim" | "Taha";
+export type ExpenseCurrency = "USD" | "TRY";
+
+export interface Expense {
+  id: string;
+  name: string;
+  amount: number;
+  currency: ExpenseCurrency;
+  isSubscription: boolean;
+  /** Day-of-month the subscription is charged (1-31). undefined for one-time. */
+  subscriptionDay?: number;
+  cardLast4?: string;
+  cardOwner: ExpenseOwner;
+  /** YYYY-MM-DD. For subscriptions this is the start date. */
+  expenseDate: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExpenseRow {
+  id: string;
+  name: string;
+  amount: string | number;
+  currency: ExpenseCurrency;
+  is_subscription: boolean;
+  subscription_day: number | null;
+  card_last4: string | null;
+  card_owner: ExpenseOwner;
+  expense_date: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function rowToExpense(row: ExpenseRow): Expense {
+  return {
+    id: row.id,
+    name: row.name,
+    amount:
+      typeof row.amount === "string" ? parseFloat(row.amount) : row.amount,
+    currency: row.currency,
+    isSubscription: row.is_subscription,
+    subscriptionDay: row.subscription_day ?? undefined,
+    cardLast4: row.card_last4 ?? undefined,
+    cardOwner: row.card_owner,
+    expenseDate: row.expense_date,
+    notes: row.notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export function rowToDesign(
   row: DesignRow,
   publicUrl: (p: string | null | undefined) => string

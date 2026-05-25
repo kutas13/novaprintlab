@@ -11,6 +11,7 @@ import {
   Package,
   FileEdit,
   ShoppingBag,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -23,6 +24,7 @@ const NAV = [
   { label: "Taha", href: "/dashboard/taha", icon: ImageIcon },
   { label: "Taslak", href: "/dashboard/taslaklar", icon: FileEdit },
   { label: "Ürünler", href: "/dashboard/urunler", icon: Package },
+  { label: "Giderler", href: "/dashboard/giderler", icon: Wallet },
 ];
 
 export function MobileNav() {

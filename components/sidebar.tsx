@@ -12,6 +12,7 @@ import {
   Package,
   FileEdit,
   ShoppingBag,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -58,6 +59,12 @@ const NAV = [
     href: "/dashboard/urunler",
     icon: Package,
     accent: "from-rose-500 to-pink-500",
+  },
+  {
+    label: "Giderler",
+    href: "/dashboard/giderler",
+    icon: Wallet,
+    accent: "from-yellow-500 to-amber-500",
   },
 ];
 
