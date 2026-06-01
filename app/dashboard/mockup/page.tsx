@@ -33,6 +33,28 @@ import { useDesignStore } from "@/lib/store";
 
 // ─── CONSTANTS ──────────────────────────────────────────────────────────────
 const PRODUCT_TYPES = ["Tişört", "Hoodie", "Sweatshirt"] as const;
+
+// UI-only product blueprint info (matches the server-side PRODUCT_MAP locks)
+const PRODUCT_INFO: Record<
+  (typeof PRODUCT_TYPES)[number],
+  { model: string; details: string }
+> = {
+  "Tişört": {
+    model: "Gildan 5000 — Heavy Cotton",
+    details:
+      "Unisex klasik kesim · 5.3 oz / 180 gsm %100 pamuk · ince ribbed yaka (kalın değil) · double-needle dikiş",
+  },
+  Hoodie: {
+    model: "Heavyweight Pullover Hoodie",
+    details:
+      "Oversized streetwear · 400 gsm brushed fleece · kangaroo pocket · drawstring kapüşon",
+  },
+  Sweatshirt: {
+    model: "Crewneck Sweatshirt",
+    details:
+      "Oversized boxy · 380 gsm brushed fleece · ribbed crew yaka · ribbed cuff & hem",
+  },
+};
 const COLORS = [
   { id: "Siyah", swatch: "#0a0a0a", label: "Siyah" },
   { id: "Beyaz", swatch: "#f5f5f4", label: "Beyaz" },
@@ -55,10 +77,25 @@ const VARIANTS = [
 ] as const;
 
 type VariantId = (typeof VARIANTS)[number]["id"];
+type ColorId = (typeof COLORS)[number]["id"];
 
 const HISTORY_KEY = "novaprint:mockup-history";
 const AI_DESIGNS_KEY = "novaprint:generated-designs";
 const HISTORY_LIMIT = 24;
+
+// Composite key for color × variant slot
+const slotKey = (color: string, variantId: VariantId) => `${color}::${variantId}`;
+const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/ş/g, "s")
+    .replace(/ı/g, "i")
+    .replace(/ç/g, "c")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ö/g, "o")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 type DesignSource =
@@ -68,6 +105,7 @@ type DesignSource =
 
 interface MockupResult {
   variantId: VariantId;
+  color: string;
   label: string;
   imageDataUrl: string;
   createdAt: number;
@@ -78,7 +116,7 @@ interface MockupSession {
   designLabel: string;
   designThumbnail: string;
   productType: string;
-  color: string;
+  colors: string[];
   results: MockupResult[];
   createdAt: number;
 }
@@ -114,8 +152,7 @@ export default function MockupPage() {
   // Settings
   const [productType, setProductType] =
     useState<(typeof PRODUCT_TYPES)[number]>("Tişört");
-  const [color, setColor] =
-    useState<(typeof COLORS)[number]["id"]>("Siyah");
+  const [selectedColors, setSelectedColors] = useState<ColorId[]>(["Siyah"]);
   const [selectedVariants, setSelectedVariants] = useState<VariantId[]>(
     VARIANTS.map((v) => v.id)
   );
@@ -123,8 +160,8 @@ export default function MockupPage() {
   // Generation state
   type VariantStatus = "pending" | "doing" | "done" | "error";
   const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState<Partial<Record<VariantId, VariantStatus>>>({});
-  const [errors, setErrors] = useState<Partial<Record<VariantId, string>>>({});
+  const [progress, setProgress] = useState<Record<string, VariantStatus>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [results, setResults] = useState<MockupResult[]>([]);
 
   // History + Modal
@@ -186,6 +223,17 @@ export default function MockupPage() {
   const selectAllVariants = () => setSelectedVariants(VARIANTS.map((v) => v.id));
   const clearAllVariants = () => setSelectedVariants([]);
 
+  const toggleColor = (id: ColorId) =>
+    setSelectedColors((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+
+  const selectAllColors = () =>
+    setSelectedColors(COLORS.map((c) => c.id) as ColorId[]);
+  const clearAllColors = () => setSelectedColors([]);
+
+  const totalJobs = selectedColors.length * selectedVariants.length;
+
   // ─── Generation ──────────────────────────────────────────────────────────
   const handleGenerate = async () => {
     if (!selectedDesign) {
@@ -196,17 +244,28 @@ export default function MockupPage() {
       toast.error("En az 1 mockup türü seç.");
       return;
     }
+    if (selectedColors.length === 0) {
+      toast.error("En az 1 renk seç.");
+      return;
+    }
 
     setGenerating(true);
     setResults([]);
     setErrors({});
 
-    const initialProgress: Partial<Record<VariantId, VariantStatus>> = {};
-    selectedVariants.forEach((v) => (initialProgress[v] = "pending"));
+    // Build all (color × variant) jobs
+    type Job = { color: ColorId; variantId: VariantId };
+    const jobs: Job[] = [];
+    selectedColors.forEach((c) =>
+      selectedVariants.forEach((v) => jobs.push({ color: c, variantId: v }))
+    );
+
+    const initialProgress: Record<string, VariantStatus> = {};
+    jobs.forEach((j) => (initialProgress[slotKey(j.color, j.variantId)] = "pending"));
     setProgress(initialProgress);
 
     const collected: MockupResult[] = [];
-    const collectedErrors: Partial<Record<VariantId, string>> = {};
+    const collectedErrors: Record<string, string> = {};
 
     // Run in batches of 3 to keep mostly-parallel + avoid OpenAI rate-limit
     const BATCH_SIZE = 3;
@@ -216,25 +275,26 @@ export default function MockupPage() {
         ? { designUrl: selectedDesign.imageUrl }
         : { designDataUrl: selectedDesign.imageDataUrl };
 
-    for (let i = 0; i < selectedVariants.length; i += BATCH_SIZE) {
-      const batch = selectedVariants.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
+      const batch = jobs.slice(i, i + BATCH_SIZE);
       // mark "doing"
       setProgress((prev) => {
         const next = { ...prev };
-        batch.forEach((v) => (next[v] = "doing"));
+        batch.forEach((j) => (next[slotKey(j.color, j.variantId)] = "doing"));
         return next;
       });
 
       await Promise.all(
-        batch.map(async (vid) => {
+        batch.map(async (job) => {
+          const key = slotKey(job.color, job.variantId);
           try {
             const r = await fetch("/api/mockup", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                variantId: vid,
+                variantId: job.variantId,
                 productType,
-                color,
+                color: job.color,
                 ...designPayload,
               }),
             });
@@ -242,20 +302,21 @@ export default function MockupPage() {
             if (!r.ok || !json.ok)
               throw new Error(json.error || "Mockup üretilemedi.");
             const item: MockupResult = {
-              variantId: vid,
+              variantId: job.variantId,
+              color: job.color,
               label: json.label,
               imageDataUrl: json.imageDataUrl,
               createdAt: Date.now(),
             };
             collected.push(item);
             setResults((prev) => [...prev, item]);
-            setProgress((prev) => ({ ...prev, [vid]: "done" }));
+            setProgress((prev) => ({ ...prev, [key]: "done" }));
           } catch (err) {
             const msg = err instanceof Error ? err.message : "Hata";
-            collectedErrors[vid] = msg;
-            setErrors((prev) => ({ ...prev, [vid]: msg }));
-            setProgress((prev) => ({ ...prev, [vid]: "error" }));
-            console.error(`[mockup] ${vid} failed:`, err);
+            collectedErrors[key] = msg;
+            setErrors((prev) => ({ ...prev, [key]: msg }));
+            setProgress((prev) => ({ ...prev, [key]: "error" }));
+            console.error(`[mockup] ${key} failed:`, err);
           }
         })
       );
@@ -284,17 +345,16 @@ export default function MockupPage() {
       designLabel,
       designThumbnail,
       productType,
-      color,
+      colors: [...selectedColors],
       results: collected,
       createdAt: Date.now(),
     };
     persistHistory([session, ...history].slice(0, HISTORY_LIMIT));
 
+    const failedCount = Object.keys(collectedErrors).length;
     toast.success(
       `${collected.length} mockup üretildi${
-        Object.keys(collectedErrors).length > 0
-          ? ` (${Object.keys(collectedErrors).length} başarısız)`
-          : ""
+        failedCount > 0 ? ` (${failedCount} başarısız)` : ""
       }`
     );
   };
@@ -303,7 +363,7 @@ export default function MockupPage() {
   const downloadOne = (item: MockupResult) => {
     const link = document.createElement("a");
     link.href = item.imageDataUrl;
-    link.download = `${productType.toLowerCase()}-${color.toLowerCase()}-${item.variantId}.jpg`;
+    link.download = `${slugify(productType)}-${slugify(item.color)}-${item.variantId}.jpg`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -318,18 +378,23 @@ export default function MockupPage() {
       results.forEach((r) => {
         const m = r.imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
         if (!m) return;
-        zip.file(
-          `${productType.toLowerCase()}-${color.toLowerCase()}-${r.variantId}.jpg`,
-          m[1],
-          { base64: true }
-        );
+        // Group by color folder when multiple colors
+        const hasMultipleColors = new Set(results.map((x) => x.color)).size > 1;
+        const path = hasMultipleColors
+          ? `${slugify(r.color)}/${slugify(productType)}-${slugify(r.color)}-${r.variantId}.jpg`
+          : `${slugify(productType)}-${slugify(r.color)}-${r.variantId}.jpg`;
+        zip.file(path, m[1], { base64: true });
       });
       const blob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       const date = new Date().toISOString().split("T")[0];
-      link.download = `mockups-${productType}-${color}-${date}.zip`.toLowerCase();
+      const colorTag =
+        selectedColors.length > 1
+          ? `${selectedColors.length}colors`
+          : slugify(selectedColors[0] || "color");
+      link.download = `mockups-${slugify(productType)}-${colorTag}-${date}.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -375,7 +440,7 @@ export default function MockupPage() {
     <div>
       <PageHeader
         title="AI Mockup Studio"
-        description="Tasarım seç, ürün ve renk belirle, tek tıkla 8 farklı premium e-ticaret mockupu üret."
+        description="Tasarım seç, ürün ve birden fazla renk belirle. Seçtiğin her renk için 8 farklı premium e-ticaret mockupu ayrı ayrı üretilir."
         icon={<ImageIcon className="h-5 w-5" />}
         accent="from-blue-500 to-violet-600"
       >
@@ -499,17 +564,52 @@ export default function MockupPage() {
                 );
               })}
             </div>
+
+            <div className="mt-3 rounded-xl border border-slate-800/70 bg-slate-950/40 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-300 mb-1 flex items-center gap-1.5">
+                <Shirt className="h-3 w-3" />
+                Kalıp / Model
+              </p>
+              <p className="text-xs font-bold text-slate-100">
+                {PRODUCT_INFO[productType].model}
+              </p>
+              <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
+                {PRODUCT_INFO[productType].details}
+              </p>
+            </div>
           </Section>
 
           {/* Color */}
-          <Section title="3. Renk" icon={<Palette className="h-4 w-4 text-pink-400" />}>
+          <Section
+            title="3. Renkler"
+            icon={<Palette className="h-4 w-4 text-pink-400" />}
+            rightSlot={
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-slate-500 tabular-nums">
+                  {selectedColors.length}/{COLORS.length}
+                </span>
+                <button
+                  onClick={selectAllColors}
+                  className="text-blue-400 hover:text-blue-300"
+                >
+                  Hepsi
+                </button>
+                <button
+                  onClick={clearAllColors}
+                  className="text-slate-500 hover:text-slate-300"
+                >
+                  Temizle
+                </button>
+              </div>
+            }
+          >
             <div className="flex flex-wrap gap-2">
               {COLORS.map((c) => {
-                const active = color === c.id;
+                const active = selectedColors.includes(c.id);
                 return (
                   <button
                     key={c.id}
-                    onClick={() => setColor(c.id)}
+                    onClick={() => toggleColor(c.id)}
                     className={cn(
                       "flex items-center gap-2 py-1.5 pl-1.5 pr-3 rounded-full transition-all border",
                       active
@@ -517,15 +617,33 @@ export default function MockupPage() {
                         : "bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700"
                     )}
                   >
-                    <span
-                      className="h-5 w-5 rounded-full ring-1 ring-slate-700 shrink-0"
-                      style={{ background: c.swatch }}
-                    />
+                    <span className="relative h-5 w-5 shrink-0">
+                      <span
+                        className="absolute inset-0 rounded-full ring-1 ring-slate-700"
+                        style={{ background: c.swatch }}
+                      />
+                      {active && (
+                        <span className="absolute inset-0 flex items-center justify-center text-white drop-shadow">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        </span>
+                      )}
+                    </span>
                     <span className="text-xs font-semibold">{c.label}</span>
                   </button>
                 );
               })}
             </div>
+            {selectedColors.length > 1 && (
+              <p className="mt-3 text-[11px] text-blue-300/80 leading-relaxed flex items-start gap-1.5">
+                <Sparkles className="h-3 w-3 mt-0.5 shrink-0" />
+                Her renk için {selectedVariants.length} mockup ayrı ayrı üretilecek
+                — toplam{" "}
+                <span className="font-bold text-blue-200">
+                  {totalJobs}
+                </span>{" "}
+                varyant.
+              </p>
+            )}
           </Section>
 
           {/* Variant picker */}
@@ -579,7 +697,12 @@ export default function MockupPage() {
 
           <Button
             onClick={handleGenerate}
-            disabled={generating || !selectedDesign || selectedVariants.length === 0}
+            disabled={
+              generating ||
+              !selectedDesign ||
+              selectedVariants.length === 0 ||
+              selectedColors.length === 0
+            }
             size="lg"
             className="w-full !bg-gradient-to-r from-blue-500 via-violet-500 to-fuchsia-500 !shadow-blue-500/30 hover:!shadow-blue-500/50 text-base h-14"
           >
@@ -591,7 +714,7 @@ export default function MockupPage() {
             ) : (
               <>
                 <Sparkles className="h-5 w-5" />
-                Mockup Oluştur ({selectedVariants.length})
+                Mockup Oluştur ({totalJobs})
               </>
             )}
           </Button>
@@ -599,8 +722,8 @@ export default function MockupPage() {
           <div className="rounded-xl border border-slate-800/50 bg-slate-950/30 p-3 flex gap-2.5 text-[11px] text-slate-500 leading-relaxed">
             <AlertCircle className="h-4 w-4 shrink-0 text-slate-600 mt-0.5" />
             <span>
-              Her variant ayrı OpenAI çağrısıdır. 3&apos;lü gruplar halinde paralel
-              çalışır. Tüm 8&apos;i ~60-90 sn sürer.{" "}
+              Her renk × variant ayrı OpenAI çağrısıdır. 3&apos;lü gruplar halinde
+              paralel çalışır. Her variant ~30 sn.{" "}
               <span className="text-slate-400">JPEG 1024×1024</span>.
             </span>
           </div>
@@ -614,6 +737,7 @@ export default function MockupPage() {
             errors={errors}
             generating={generating}
             selectedVariants={selectedVariants}
+            selectedColors={selectedColors}
             onDownloadOne={downloadOne}
             onDownloadAll={downloadAllZip}
             onPreview={setModalImage}
@@ -820,22 +944,56 @@ function ResultGrid({
   errors,
   generating,
   selectedVariants,
+  selectedColors,
   onDownloadOne,
   onDownloadAll,
   onPreview,
 }: {
   results: MockupResult[];
-  progress: Partial<Record<VariantId, "pending" | "doing" | "done" | "error">>;
-  errors: Partial<Record<VariantId, string>>;
+  progress: Record<string, "pending" | "doing" | "done" | "error">;
+  errors: Record<string, string>;
   generating: boolean;
   selectedVariants: VariantId[];
+  selectedColors: string[];
   onDownloadOne: (item: MockupResult) => void;
   onDownloadAll: () => void;
   onPreview: (src: string) => void;
 }) {
-  const slots = generating || results.length > 0 ? selectedVariants : [];
-
   const hasAny = results.length > 0;
+  const resultColors = Array.from(new Set(results.map((r) => r.color)));
+  const colorsToShow = generating
+    ? selectedColors
+    : resultColors.length > 0
+      ? resultColors
+      : [];
+
+  // Per-color download (slugify imported from parent scope via closure)
+  const downloadColorZip = async (color: string) => {
+    const colorResults = results.filter((r) => r.color === color);
+    if (colorResults.length === 0) return;
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      colorResults.forEach((r) => {
+        const m = r.imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (!m) return;
+        zip.file(`${slugify(color)}-${r.variantId}.jpg`, m[1], { base64: true });
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `mockups-${slugify(color)}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success(`${color} ZIP indirildi`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Hata";
+      toast.error(`ZIP hatası: ${msg}`);
+    }
+  };
 
   return (
     <div>
@@ -851,7 +1009,7 @@ function ResultGrid({
         )}
       </div>
 
-      {slots.length === 0 ? (
+      {colorsToShow.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-12 text-center">
           <div className="h-14 w-14 mx-auto rounded-2xl bg-gradient-to-br from-blue-500/15 to-violet-500/10 ring-1 ring-blue-500/25 flex items-center justify-center mb-3">
             <ImageIcon className="h-7 w-7 text-blue-400" />
@@ -860,90 +1018,132 @@ function ResultGrid({
             Sol panelden başla
           </p>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            Tasarımını seç, ürün ve renk belirle ve &quot;Mockup Oluştur&quot;a tıkla.
-            8 ayrı premium mockup grid&apos;de görünecek.
+            Tasarımını seç, ürün ve bir veya birden fazla renk belirle, &quot;Mockup
+            Oluştur&quot;a tıkla. Her renk için ayrı ayrı premium mockuplar
+            burada görünecek.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {slots.map((vid) => {
-            const variantDef = VARIANTS.find((v) => v.id === vid);
-            const item = results.find((r) => r.variantId === vid);
-            const status = progress[vid] || "pending";
-            const errorMsg = errors[vid];
-
+        <div className="space-y-6">
+          {colorsToShow.map((color) => {
+            const colorDef = COLORS.find((c) => c.id === color);
+            const colorDone = results.filter(
+              (r) => r.color === color && progress[slotKey(color, r.variantId)] === "done"
+            ).length;
             return (
-              <div
-                key={vid}
-                className={cn(
-                  "rounded-2xl overflow-hidden border bg-gradient-to-br from-slate-900/70 to-slate-900/30 backdrop-blur transition-all",
-                  status === "done"
-                    ? "border-slate-800/70 hover:border-blue-500/40 hover:-translate-y-1 hover:shadow-elev-3 cursor-pointer"
-                    : "border-slate-800/70"
-                )}
-              >
-                <div className="relative aspect-square bg-slate-950/40 overflow-hidden">
-                  {status === "done" && item ? (
-                    <>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={item.imageDataUrl}
-                        alt={item.label}
-                        className="absolute inset-0 w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => onPreview(item.imageDataUrl)}
-                        className="absolute inset-0 flex items-center justify-center bg-slate-950/0 hover:bg-slate-950/40 transition-colors group"
-                      >
-                        <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-slate-950/80 backdrop-blur-sm rounded-full px-3 py-1.5 text-xs font-semibold text-white flex items-center gap-1.5">
-                          <Maximize2 className="h-3 w-3" />
-                          Önizle
-                        </span>
-                      </button>
-                    </>
-                  ) : status === "error" ? (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center">
-                      <AlertCircle className="h-7 w-7 text-red-400" />
-                      <p className="text-[10.5px] text-red-300 leading-tight line-clamp-3">
-                        {errorMsg || "Üretim başarısız"}
+              <div key={color}>
+                {/* Color group header */}
+                <div className="flex items-center justify-between mb-2.5 sticky top-0 z-10 bg-slate-950/60 backdrop-blur-sm py-1.5 -mx-1 px-1 rounded-lg">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="h-7 w-7 rounded-full ring-2 ring-slate-800 shadow-md shrink-0"
+                      style={{ background: colorDef?.swatch }}
+                    />
+                    <div>
+                      <p className="text-sm font-bold text-slate-100 leading-tight">
+                        {color}
+                      </p>
+                      <p className="text-[10.5px] text-slate-500 tabular-nums">
+                        {colorDone}/{selectedVariants.length} mockup
                       </p>
                     </div>
-                  ) : status === "doing" ? (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                      <div className="relative">
-                        <div className="h-12 w-12 rounded-full border-3 border-blue-500/20 border-t-blue-400 animate-spin" />
-                      </div>
-                      <p className="text-[11px] text-blue-300 font-semibold">
-                        Üretiliyor…
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/30 animate-pulse">
-                      <span className="text-2xl opacity-30">
-                        {variantDef?.emoji}
-                      </span>
-                      <p className="text-[10px] text-slate-600 font-medium">
-                        Sırada bekliyor
-                      </p>
-                    </div>
-                  )}
-                </div>
-                <div className="p-2.5 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-sm shrink-0">{variantDef?.emoji}</span>
-                    <p className="text-xs font-semibold text-slate-200 truncate">
-                      {variantDef?.label}
-                    </p>
                   </div>
-                  {status === "done" && item && (
+                  {colorDone > 0 && (
                     <button
-                      onClick={() => onDownloadOne(item)}
-                      className="shrink-0 h-7 w-7 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 hover:text-emerald-300 text-slate-400 flex items-center justify-center transition-colors"
-                      aria-label="İndir"
+                      onClick={() => downloadColorZip(color)}
+                      className="text-[11px] font-semibold text-blue-300 hover:text-blue-200 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-blue-500/10 transition-colors"
                     >
-                      <Download className="h-3.5 w-3.5" />
+                      <Archive className="h-3 w-3" />
+                      {color} ZIP
                     </button>
                   )}
+                </div>
+
+                {/* Variant grid for this color */}
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {selectedVariants.map((vid) => {
+                    const variantDef = VARIANTS.find((v) => v.id === vid);
+                    const item = results.find(
+                      (r) => r.variantId === vid && r.color === color
+                    );
+                    const key = slotKey(color, vid);
+                    const status = progress[key] || "pending";
+                    const errorMsg = errors[key];
+
+                    return (
+                      <div
+                        key={key}
+                        className={cn(
+                          "rounded-2xl overflow-hidden border bg-gradient-to-br from-slate-900/70 to-slate-900/30 backdrop-blur transition-all",
+                          status === "done"
+                            ? "border-slate-800/70 hover:border-blue-500/40 hover:-translate-y-1 hover:shadow-elev-3"
+                            : "border-slate-800/70"
+                        )}
+                      >
+                        <div className="relative aspect-square bg-slate-950/40 overflow-hidden">
+                          {status === "done" && item ? (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={item.imageDataUrl}
+                                alt={item.label}
+                                className="absolute inset-0 w-full h-full object-cover"
+                              />
+                              <button
+                                onClick={() => onPreview(item.imageDataUrl)}
+                                className="absolute inset-0 flex items-center justify-center bg-slate-950/0 hover:bg-slate-950/40 transition-colors group"
+                              >
+                                <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-slate-950/80 backdrop-blur-sm rounded-full px-3 py-1.5 text-xs font-semibold text-white flex items-center gap-1.5">
+                                  <Maximize2 className="h-3 w-3" />
+                                  Önizle
+                                </span>
+                              </button>
+                            </>
+                          ) : status === "error" ? (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center">
+                              <AlertCircle className="h-7 w-7 text-red-400" />
+                              <p className="text-[10.5px] text-red-300 leading-tight line-clamp-3">
+                                {errorMsg || "Üretim başarısız"}
+                              </p>
+                            </div>
+                          ) : status === "doing" ? (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                              <div className="h-12 w-12 rounded-full border-3 border-blue-500/20 border-t-blue-400 animate-spin" />
+                              <p className="text-[11px] text-blue-300 font-semibold">
+                                Üretiliyor…
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/30 animate-pulse">
+                              <span className="text-2xl opacity-30">
+                                {variantDef?.emoji}
+                              </span>
+                              <p className="text-[10px] text-slate-600 font-medium">
+                                Sırada bekliyor
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-2.5 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm shrink-0">{variantDef?.emoji}</span>
+                            <p className="text-xs font-semibold text-slate-200 truncate">
+                              {variantDef?.label}
+                            </p>
+                          </div>
+                          {status === "done" && item && (
+                            <button
+                              onClick={() => onDownloadOne(item)}
+                              className="shrink-0 h-7 w-7 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 hover:text-emerald-300 text-slate-400 flex items-center justify-center transition-colors"
+                              aria-label="İndir"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -961,9 +1161,23 @@ function HistorySession({
   session: MockupSession;
   onPreview: (src: string) => void;
 }) {
+  // Backward-compat: older sessions stored a single `color` instead of `colors`
+  const sessionColors: string[] =
+    session.colors && session.colors.length > 0
+      ? session.colors
+      : ((session as unknown as { color?: string }).color
+          ? [(session as unknown as { color: string }).color]
+          : Array.from(new Set(session.results.map((r) => r.color).filter(Boolean))));
+
+  // Group results by color
+  const grouped = sessionColors.map((c) => ({
+    color: c,
+    items: session.results.filter((r) => (r.color || sessionColors[0]) === c),
+  }));
+
   return (
     <div className="rounded-2xl border border-slate-800/70 bg-slate-900/40 backdrop-blur p-4">
-      <div className="flex items-center gap-3 mb-3">
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
         <div className="h-12 w-12 rounded-lg checkerboard overflow-hidden relative shrink-0 ring-1 ring-slate-800">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -976,9 +1190,20 @@ function HistorySession({
           <p className="text-sm font-semibold text-slate-100 truncate">
             {session.designLabel}
           </p>
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <Badge variant="secondary">{session.productType}</Badge>
-            <Badge variant="secondary">{session.color}</Badge>
+            {sessionColors.map((c) => {
+              const def = COLORS.find((x) => x.id === c);
+              return (
+                <Badge key={c} variant="secondary" className="!gap-1.5 !pl-1">
+                  <span
+                    className="h-3 w-3 rounded-full ring-1 ring-slate-700"
+                    style={{ background: def?.swatch || "#777" }}
+                  />
+                  {c}
+                </Badge>
+              );
+            })}
             <span className="text-[11px] text-slate-500">
               {new Date(session.createdAt).toLocaleString("tr-TR", {
                 day: "numeric",
@@ -991,21 +1216,43 @@ function HistorySession({
         </div>
         <Badge variant="info">{session.results.length} mockup</Badge>
       </div>
-      <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
-        {session.results.map((r) => (
-          <button
-            key={r.variantId}
-            onClick={() => onPreview(r.imageDataUrl)}
-            className="aspect-square rounded-lg overflow-hidden border border-slate-800 hover:border-slate-700 transition-all group relative"
-            title={r.label}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={r.imageDataUrl}
-              alt={r.label}
-              className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform"
-            />
-          </button>
+
+      <div className="space-y-3 mt-1">
+        {grouped.map((g) => (
+          <div key={g.color}>
+            {sessionColors.length > 1 && (
+              <p className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <span
+                  className="h-2.5 w-2.5 rounded-full ring-1 ring-slate-700"
+                  style={{
+                    background:
+                      COLORS.find((x) => x.id === g.color)?.swatch || "#777",
+                  }}
+                />
+                {g.color}
+                <span className="text-slate-600 font-normal">
+                  · {g.items.length} mockup
+                </span>
+              </p>
+            )}
+            <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
+              {g.items.map((r) => (
+                <button
+                  key={`${r.color}-${r.variantId}`}
+                  onClick={() => onPreview(r.imageDataUrl)}
+                  className="aspect-square rounded-lg overflow-hidden border border-slate-800 hover:border-slate-700 transition-all group relative"
+                  title={r.label}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={r.imageDataUrl}
+                    alt={r.label}
+                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </div>
