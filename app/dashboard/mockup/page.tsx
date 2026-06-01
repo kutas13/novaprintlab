@@ -32,6 +32,11 @@ import { UsageMeter } from "@/components/usage-meter";
 import { cn } from "@/lib/utils";
 import { useDesignStore } from "@/lib/store";
 import { idbGet, idbSet, idbDel } from "@/lib/idb-kv";
+import {
+  ENGINE_LIST,
+  ENGINES,
+  type EngineId,
+} from "@/lib/mockup-engines";
 
 // ─── CONSTANTS ──────────────────────────────────────────────────────────────
 const PRODUCT_TYPES = ["Tişört", "Hoodie", "Sweatshirt"] as const;
@@ -58,27 +63,6 @@ const PRODUCT_INFO: Record<
   },
 };
 
-// Printful catalog uses different blanks; we surface them in the UI when the
-// engine is set to Printful so the user knows which real product they'll get.
-const PRINTFUL_PRODUCT_INFO: Record<
-  (typeof PRODUCT_TYPES)[number],
-  { model: string; details: string }
-> = {
-  "Tişört": {
-    model: "Bella+Canvas 3001 — Unisex Jersey",
-    details:
-      "Hafif/midweight, klasik unisex kesim. Printful kataloğunda Gildan 5000 yok; 3001 en yakın POD eşdeğeri ve en yaygın kullanılan unisex tee.",
-  },
-  Hoodie: {
-    model: "Gildan 18500 — Heavy Blend Hoodie",
-    details:
-      "Klasik pullover, kanguru cebi, drawstring kapüşon. 50/50 cotton-poly.",
-  },
-  Sweatshirt: {
-    model: "Gildan 18000 — Heavy Blend Crewneck",
-    details: "Klasik crew yaka, ribbed cuff & hem. 50/50 cotton-poly.",
-  },
-};
 const COLORS = [
   { id: "Siyah", swatch: "#0a0a0a", label: "Siyah" },
   { id: "Beyaz", swatch: "#f5f5f4", label: "Beyaz" },
@@ -241,21 +225,13 @@ export default function MockupPage() {
   const qualityDef =
     QUALITY_TIERS.find((q) => q.id === quality) || QUALITY_TIERS[1];
 
-  // ─── Engine: OpenAI (paid, multi-pose) vs Printful (free, 1 default pose/color)
-  // Default: Printful — it's free, no OpenAI bill, instant catalogue mockups.
-  // Switch to OpenAI when you need lifestyle photo poses (8 variants).
-  type Engine = "openai" | "printful";
-  const [engine, setEngine] = useState<Engine>("printful");
-  // When the user switches engines we lock the variant selection to what
-  // each engine actually supports, so the CTA always matches what'll be
-  // produced. Printful always renders 1 default front view per color.
-  useEffect(() => {
-    if (engine === "printful") {
-      setSelectedVariants(["folded"] as VariantId[]);
-    } else {
-      setSelectedVariants(ESSENTIAL_VARIANTS as unknown as VariantId[]);
-    }
-  }, [engine]);
+  // Mockup engine — picks which AI provider we POST to. OpenAI uses the
+  // QUALITY_TIERS cost ladder; every other engine has a single flat cost
+  // baked into its metadata (lib/mockup-engines.ts).
+  const [engine, setEngine] = useState<EngineId>("openai");
+  const engineMeta = ENGINES[engine];
+  const perMockupCost =
+    engine === "openai" ? qualityDef.cost : engineMeta.costUsd;
 
   // Generation state
   type VariantStatus = "pending" | "doing" | "done" | "error";
@@ -595,7 +571,7 @@ export default function MockupPage() {
         batch.map(async (job) => {
           const key = slotKey(job.color, job.variantId);
           try {
-            const r = await fetch("/api/mockup", {
+            const r = await fetch(ENGINES[engine].endpoint, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -725,223 +701,6 @@ export default function MockupPage() {
     }
   };
 
-  // ─── PRINTFUL ENGINE ─────────────────────────────────────────────────────
-  // Renders one default front mockup per color via Printful's free mockup
-  // generator. Compared to OpenAI:
-  //   • $0 per mockup (Printful is free if you have a Printful account)
-  //   • Photorealistic (real product photos with overlay, not AI)
-  //   • Only 1 pose per color (default front view)
-  // Pipeline:
-  //   1) Get a public HTTPS URL for the design (Supabase for store designs,
-  //      our /api/printful-upload helper for AI/uploaded base64 designs).
-  //   2) POST /api/mockup-printful → 1 task per color, polled to completion.
-  //   3) Map result mockups into the existing `results` shape (slot=folded
-  //      placeholder) so the rest of the page reuses the same grid/zip/
-  //      approve-to-drafts pipeline.
-  const ensurePublicUrl = useCallback(async (): Promise<string | null> => {
-    if (!selectedDesign) return null;
-
-    // STORE designs: imageUrl is already a Supabase public URL — but if the
-    // bucket is private OR the public flag was toggled off, Printful won't be
-    // able to fetch it. Round-trip through /api/printful-design-url which
-    // converts public URLs into 24h signed URLs that work regardless of
-    // bucket visibility.
-    if (selectedDesign.type === "store") {
-      try {
-        const res = await fetch("/api/printful-design-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ designUrl: selectedDesign.imageUrl }),
-        });
-        const json = await res.json();
-        if (res.ok && json.ok && json.url) return json.url as string;
-      } catch {
-        // fall back to raw URL
-      }
-      return selectedDesign.imageUrl;
-    }
-
-    // AI / upload designs are base64 — upload to Supabase via our helper
-    // endpoint so Printful's worker can fetch the file over HTTPS.
-    const filename =
-      selectedDesign.type === "ai"
-        ? slugify(selectedDesign.prompt).slice(0, 40) || "ai-design"
-        : slugify(selectedDesign.name).replace(/\.[a-z0-9]+$/, "") || "upload";
-    const res = await fetch("/api/printful-upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        dataUrl: selectedDesign.imageDataUrl,
-        filename,
-      }),
-    });
-    const json = await res.json();
-    if (!res.ok || !json.ok) {
-      throw new Error(
-        json.error || "Tasarım Supabase'e yüklenemedi (Printful için public URL gerekli)."
-      );
-    }
-    return json.publicUrl as string;
-  }, [selectedDesign]);
-
-  const runPrintfulJobs = async () => {
-    if (!selectedDesign) {
-      toast.error("Önce bir tasarım seç veya yükle.");
-      return;
-    }
-    if (selectedColors.length === 0) {
-      toast.error("En az 1 renk seç.");
-      return;
-    }
-    setGenerating(true);
-    setResults([]);
-    setErrors({});
-    // Mark every requested color as pending → doing
-    const initProg: Record<string, VariantStatus> = {};
-    selectedColors.forEach(
-      (c) => (initProg[slotKey(c, "folded" as VariantId)] = "doing")
-    );
-    setProgress(initProg);
-
-    const toastId = `printful-${Date.now()}`;
-    toast.loading(
-      `Printful: ${selectedColors.length} renk için mockup üretiliyor…`,
-      { id: toastId }
-    );
-
-    try {
-      const designUrl = await ensurePublicUrl();
-      if (!designUrl) {
-        toast.error("Tasarım URL'i çıkarılamadı.", { id: toastId });
-        setGenerating(false);
-        return;
-      }
-
-      const res = await fetch("/api/mockup-printful", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productType,
-          colors: selectedColors,
-          designUrl,
-        }),
-      });
-      const json = await res.json();
-      // Always log the full payload so the browser console has the per-color
-      // error map (json.errors) and resolved variant IDs (json.debug) — these
-      // are the bits we need to diagnose a "hiçbir mockup üretilemedi" run.
-      console.log("[printful] response", res.status, json);
-      if (!res.ok || !json.ok) {
-        throw new Error(json.error || "Printful API hatası.");
-      }
-
-      // Group multiple mockups per color (Printful may return 2-3 views for
-      // a single variant) into our flat results array. We use "folded" as a
-      // placeholder slot and label each result with its placement.
-      const collected: MockupResult[] = [];
-      const collectedErrors: Record<string, string> = { ...(json.errors || {}) };
-
-      type PfMockup = {
-        color: ColorId;
-        printfulColor: string;
-        placement: string;
-        imageUrl: string;
-        styleId?: number;
-      };
-      const list = (json.mockups || []) as PfMockup[];
-
-      list.forEach((m, idx) => {
-        const item: MockupResult = {
-          variantId: "folded" as VariantId,
-          color: m.color,
-          label: `Printful · ${m.printfulColor}${
-            m.placement && m.placement !== "front" ? ` · ${m.placement}` : ""
-          }`,
-          imageDataUrl: m.imageUrl, // HTTPS URL (Printful CDN)
-          createdAt: Date.now() + idx,
-        };
-        collected.push(item);
-      });
-
-      // Mark progress
-      setProgress(() => {
-        const next: Record<string, VariantStatus> = {};
-        selectedColors.forEach((c) => {
-          const hasResult = list.some((m) => m.color === c);
-          next[slotKey(c, "folded" as VariantId)] = hasResult
-            ? "done"
-            : "error";
-          if (!hasResult && !collectedErrors[c]) {
-            collectedErrors[c] = "Bu renk için mockup üretilemedi.";
-          }
-        });
-        return next;
-      });
-      // Map color-level errors to slot-level for the UI
-      const slotErrors: Record<string, string> = {};
-      Object.entries(collectedErrors).forEach(([color, msg]) => {
-        slotErrors[slotKey(color, "folded" as VariantId)] = msg;
-      });
-      setErrors(slotErrors);
-      setResults(collected);
-
-      if (collected.length > 0) {
-        const designThumbnail =
-          selectedDesign.type === "store"
-            ? selectedDesign.imageUrl
-            : selectedDesign.imageDataUrl;
-        const designLabel =
-          selectedDesign.type === "ai"
-            ? selectedDesign.prompt
-            : selectedDesign.name;
-        appendSession({
-          id: Math.random().toString(36).slice(2, 10),
-          designLabel,
-          designThumbnail,
-          productType,
-          colors: [...selectedColors],
-          results: collected,
-          createdAt: Date.now(),
-        });
-      }
-
-      if (collected.length === 0) {
-        toast.error("Hiçbir Printful mockup üretilemedi.", { id: toastId });
-      } else if (Object.keys(collectedErrors).length > 0) {
-        toast.success(
-          `${collected.length} Printful mockup üretildi · ${
-            Object.keys(collectedErrors).length
-          } renk başarısız`,
-          { id: toastId }
-        );
-      } else {
-        toast.success(`${collected.length} Printful mockup üretildi (ÜCRETSİZ).`, {
-          id: toastId,
-          duration: 5000,
-        });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Hata";
-      console.error("[printful] generation failed:", err);
-      // The error message from the API already includes diagnostic detail
-      // (per-color reasons, available colors sample, etc.). Show the long
-      // form so the user sees actionable info, but cap so the toast fits.
-      const compact = msg.length > 280 ? msg.slice(0, 277) + "…" : msg;
-      toast.error(compact, { id: toastId, duration: 12000 });
-      // Reset progress on failure
-      setProgress((prev) => {
-        const next: Record<string, VariantStatus> = { ...prev };
-        selectedColors.forEach((c) => {
-          const k = slotKey(c, "folded" as VariantId);
-          if (next[k] !== "done") next[k] = "error";
-        });
-        return next;
-      });
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   const handleGenerate = async () => {
     if (!selectedDesign) {
       toast.error("Önce bir tasarım seç veya yükle.");
@@ -949,10 +708,6 @@ export default function MockupPage() {
     }
     if (selectedColors.length === 0) {
       toast.error("En az 1 renk seç.");
-      return;
-    }
-    if (engine === "printful") {
-      await runPrintfulJobs();
       return;
     }
     if (selectedVariants.length === 0) {
@@ -1108,109 +863,158 @@ export default function MockupPage() {
     <div>
       <PageHeader
         title="AI Mockup Studio"
-        description={
-          engine === "printful"
-            ? "Tasarım seç, ürün ve renkleri belirle. Printful gerçek ürün fotoğrafına otomatik overlay yapar — ücretsiz."
-            : "Tasarım seç, ürün ve birden fazla renk belirle. Seçtiğin her renk için 8 farklı premium e-ticaret mockupu ayrı ayrı üretilir."
-        }
+        description="Tasarım seç, ürün ve birden fazla renk belirle. Seçtiğin her renk için 8 farklı premium e-ticaret mockupu ayrı ayrı üretilir."
         icon={<ImageIcon className="h-5 w-5" />}
-        accent={engine === "printful" ? "from-emerald-500 to-teal-600" : "from-blue-500 to-violet-600"}
+        accent="from-blue-500 to-violet-600"
       >
-        {engine === "printful" ? (
-          <Badge className="gap-1.5 bg-emerald-500/15 text-emerald-200 border-emerald-500/30">
-            <Sparkles className="h-3 w-3" /> Printful · Ücretsiz
-          </Badge>
-        ) : (
-          <Badge variant="violet" className="gap-1.5">
-            <Sparkles className="h-3 w-3" /> gpt-image-1 edit
-          </Badge>
-        )}
+        <Badge variant="violet" className="gap-1.5">
+          <Sparkles className="h-3 w-3" /> {engineMeta.emoji} {engineMeta.label}
+        </Badge>
       </PageHeader>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)] gap-5">
         {/* ─── LEFT PANEL ─── */}
         <div className="space-y-4">
-          {/* Engine selector — chooses between Printful (free, 1 mockup/color)
-              and OpenAI (paid, multi-pose). Default is Printful for cost reasons. */}
+          {/* Engine picker — chooses which AI provider produces the mockups.
+              Each engine has its own pricing, latency and quality profile;
+              the user picks whichever they have an API key for. */}
           <div className="rounded-2xl border border-slate-800/70 bg-gradient-to-br from-slate-900/80 to-slate-950/60 backdrop-blur p-3 shadow-elev-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2 px-1">
-              Üretim Motoru
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setEngine("printful")}
-                disabled={generating}
-                className={cn(
-                  "p-3 rounded-xl text-left transition-all border relative overflow-hidden",
-                  engine === "printful"
-                    ? "bg-gradient-to-br from-emerald-500/20 to-teal-500/15 border-emerald-500/40 ring-1 ring-emerald-500/30 shadow-elev-1"
-                    : "bg-slate-900/40 border-slate-800 hover:border-slate-700"
-                )}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xl">🎨</span>
-                  <span
-                    className={cn(
-                      "text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
-                      engine === "printful"
-                        ? "bg-emerald-500/20 text-emerald-200"
-                        : "bg-slate-800 text-slate-500"
-                    )}
-                  >
-                    ÜCRETSİZ
-                  </span>
-                </div>
-                <p
-                  className={cn(
-                    "text-sm font-bold",
-                    engine === "printful" ? "text-white" : "text-slate-200"
-                  )}
-                >
-                  Printful Studio
-                </p>
-                <p className="text-[10.5px] text-slate-400 leading-snug mt-0.5">
-                  Gerçek ürün foto + overlay. Renk başına 1 default mockup.
-                </p>
-              </button>
-              <button
-                onClick={() => setEngine("openai")}
-                disabled={generating}
-                className={cn(
-                  "p-3 rounded-xl text-left transition-all border",
-                  engine === "openai"
-                    ? "bg-gradient-to-br from-blue-500/20 to-violet-500/15 border-blue-500/40 ring-1 ring-blue-500/30 shadow-elev-1"
-                    : "bg-slate-900/40 border-slate-800 hover:border-slate-700"
-                )}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xl">🤖</span>
-                  <span
-                    className={cn(
-                      "text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
-                      engine === "openai"
-                        ? "bg-blue-500/20 text-blue-200"
-                        : "bg-slate-800 text-slate-500"
-                    )}
-                  >
-                    AI · $0.015+
-                  </span>
-                </div>
-                <p
-                  className={cn(
-                    "text-sm font-bold",
-                    engine === "openai" ? "text-white" : "text-slate-200"
-                  )}
-                >
-                  OpenAI Studio
-                </p>
-                <p className="text-[10.5px] text-slate-400 leading-snug mt-0.5">
-                  8 farklı poz (lifestyle, model, katlanmış…). Yapay zekâ.
-                </p>
-              </button>
+            <div className="flex items-center justify-between mb-2 px-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                Üretim Motoru
+              </p>
+              <span className="text-[10px] text-slate-500">
+                Her motorun ayrı API key'i var
+              </span>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              {ENGINE_LIST.map((eng) => {
+                const isActive = engine === eng.id;
+                // Tailwind doesn't allow dynamic class composition at JIT
+                // time, so we map each engine id to its static class set.
+                const activeStyles: Record<EngineId, string> = {
+                  openai:
+                    "bg-gradient-to-br from-blue-500/20 to-violet-500/15 border-blue-500/40 ring-1 ring-blue-500/30 shadow-elev-1",
+                  replicate:
+                    "bg-gradient-to-br from-purple-500/20 to-fuchsia-500/15 border-purple-500/40 ring-1 ring-purple-500/30 shadow-elev-1",
+                  fal: "bg-gradient-to-br from-amber-500/20 to-orange-500/15 border-amber-500/40 ring-1 ring-amber-500/30 shadow-elev-1",
+                  gemini:
+                    "bg-gradient-to-br from-emerald-500/20 to-teal-500/15 border-emerald-500/40 ring-1 ring-emerald-500/30 shadow-elev-1",
+                  recraft:
+                    "bg-gradient-to-br from-rose-500/20 to-pink-500/15 border-rose-500/40 ring-1 ring-rose-500/30 shadow-elev-1",
+                };
+                const badgeStyles: Record<EngineId, string> = {
+                  openai: "bg-blue-500/20 text-blue-200",
+                  replicate: "bg-purple-500/20 text-purple-200",
+                  fal: "bg-amber-500/20 text-amber-200",
+                  gemini: "bg-emerald-500/20 text-emerald-200",
+                  recraft: "bg-rose-500/20 text-rose-200",
+                };
+                // With 5 engines the bottom row only has 1 button — make
+                // that lonely card span the full row so the grid doesn't
+                // look broken. Tailwind's `[&:nth-child(5)]:col-span-2`
+                // arbitrary selector handles this without a wrapper.
+                return (
+                  <button
+                    key={eng.id}
+                    onClick={() => setEngine(eng.id)}
+                    disabled={generating}
+                    className={cn(
+                      "p-3 rounded-xl text-left transition-all border relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed",
+                      "[&:nth-child(5)]:col-span-2",
+                      isActive
+                        ? activeStyles[eng.id]
+                        : "bg-slate-900/40 border-slate-800 hover:border-slate-700"
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xl">{eng.emoji}</span>
+                      <span
+                        className={cn(
+                          "text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
+                          isActive ? badgeStyles[eng.id] : "bg-slate-800 text-slate-500"
+                        )}
+                      >
+                        {eng.badge}
+                      </span>
+                    </div>
+                    <p
+                      className={cn(
+                        "text-sm font-bold",
+                        isActive ? "text-white" : "text-slate-200"
+                      )}
+                    >
+                      {eng.label}
+                    </p>
+                    <p className="text-[10.5px] text-slate-400 leading-snug mt-0.5 line-clamp-2">
+                      {eng.blurb}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+            {engine !== "openai" && (
+              <p className="text-[10.5px] text-slate-400 mt-2.5 px-1 leading-relaxed">
+                {engine === "gemini" ? (
+                  <>
+                    🎁 <span className="text-emerald-300 font-semibold">Ücretsiz</span> ·
+                    API key:{" "}
+                    <a
+                      href="https://aistudio.google.com/apikey"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-300 underline"
+                    >
+                      aistudio.google.com/apikey
+                    </a>{" "}
+                    · .env'e <code className="text-slate-300">GEMINI_API_KEY</code>
+                  </>
+                ) : engine === "replicate" ? (
+                  <>
+                    🔑 API key:{" "}
+                    <a
+                      href="https://replicate.com/account/api-tokens"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-purple-300 underline"
+                    >
+                      replicate.com/account/api-tokens
+                    </a>{" "}
+                    · .env'e <code className="text-slate-300">REPLICATE_API_TOKEN</code>
+                  </>
+                ) : engine === "recraft" ? (
+                  <>
+                    🎨 <span className="text-rose-300 font-semibold">~25 ücretsiz/gün</span> ·
+                    API key:{" "}
+                    <a
+                      href="https://www.recraft.ai/profile/api"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-rose-300 underline"
+                    >
+                      recraft.ai/profile/api
+                    </a>{" "}
+                    · .env'e <code className="text-slate-300">RECRAFT_API_TOKEN</code>
+                  </>
+                ) : (
+                  <>
+                    🔑 API key:{" "}
+                    <a
+                      href="https://fal.ai/dashboard/keys"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-amber-300 underline"
+                    >
+                      fal.ai/dashboard/keys
+                    </a>{" "}
+                    · .env'e <code className="text-slate-300">FAL_API_KEY</code>
+                  </>
+                )}
+              </p>
+            )}
           </div>
 
-          {/* Daily $5 OpenAI usage meter — only relevant for OpenAI engine */}
+          {/* Daily $5 OpenAI usage meter — only meaningful for OpenAI engine */}
           {engine === "openai" && <UsageMeter snapshot={usageSnapshot} />}
 
           {/* Design source picker */}
@@ -1346,21 +1150,13 @@ export default function MockupPage() {
             <div className="mt-3 rounded-xl border border-slate-800/70 bg-slate-950/40 p-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-300 mb-1 flex items-center gap-1.5">
                 <Shirt className="h-3 w-3" />
-                Kalıp / Model {engine === "printful" && (
-                  <span className="text-emerald-400/80 normal-case font-semibold tracking-normal">
-                    · Printful kataloğu
-                  </span>
-                )}
+                Kalıp / Model
               </p>
               <p className="text-xs font-bold text-slate-100">
-                {engine === "printful"
-                  ? PRINTFUL_PRODUCT_INFO[productType].model
-                  : PRODUCT_INFO[productType].model}
+                {PRODUCT_INFO[productType].model}
               </p>
               <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
-                {engine === "printful"
-                  ? PRINTFUL_PRODUCT_INFO[productType].details
-                  : PRODUCT_INFO[productType].details}
+                {PRODUCT_INFO[productType].details}
               </p>
             </div>
           </Section>
@@ -1432,26 +1228,7 @@ export default function MockupPage() {
             )}
           </Section>
 
-          {/* Variant + Quality only matter for the OpenAI engine. Printful
-              always renders 1 default front view per color. */}
-          {engine === "printful" && (
-            <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-300 mb-1 flex items-center gap-1.5">
-                <Package className="h-3 w-3" />
-                Printful Modu
-              </p>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Her renk için <span className="font-bold text-emerald-200">1 profesyonel front mockup</span> üretilir
-                (Printful'un gerçek ürün fotoğrafına otomatik overlay). Poz/varyant seçimine gerek yok.
-              </p>
-              <p className="text-[11px] text-emerald-400/80 mt-1.5">
-                <span className="font-bold">Maliyet: $0.00</span> · Printful hesabın var olduğu sürece sınırsız.
-              </p>
-            </div>
-          )}
-
           {/* Variant picker */}
-          {engine === "openai" && (
           <Section
             title="4. Mockup Türleri"
             icon={<Package className="h-4 w-4 text-emerald-400" />}
@@ -1499,10 +1276,8 @@ export default function MockupPage() {
               })}
             </div>
           </Section>
-          )}
 
-          {/* Quality tier — OpenAI only */}
-          {engine === "openai" && (
+          {/* Quality tier */}
           <Section
             title="5. Görsel Kalitesi"
             icon={<Sparkles className="h-4 w-4 text-amber-400" />}
@@ -1563,7 +1338,6 @@ export default function MockupPage() {
               )}
             </p>
           </Section>
-          )}
 
           <Button
             onClick={handleGenerate}
@@ -1571,52 +1345,44 @@ export default function MockupPage() {
               generating ||
               !selectedDesign ||
               selectedColors.length === 0 ||
-              (engine === "openai" && selectedVariants.length === 0)
+              selectedVariants.length === 0
             }
             size="lg"
-            className={cn(
-              "w-full text-base h-14",
-              engine === "printful"
-                ? "!bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 !shadow-emerald-500/30 hover:!shadow-emerald-500/50"
-                : "!bg-gradient-to-r from-blue-500 via-violet-500 to-fuchsia-500 !shadow-blue-500/30 hover:!shadow-blue-500/50"
-            )}
+            className="w-full !bg-gradient-to-r from-blue-500 via-violet-500 to-fuchsia-500 !shadow-blue-500/30 hover:!shadow-blue-500/50 text-base h-14"
           >
             {generating ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
                 Mockuplar Üretiliyor…
               </>
-            ) : engine === "printful" ? (
-              <>
-                <Sparkles className="h-5 w-5" />
-                Printful Mockup Oluştur ({selectedColors.length}) · ÜCRETSİZ
-              </>
             ) : (
               <>
                 <Sparkles className="h-5 w-5" />
-                Mockup Oluştur ({totalJobs}) · ${(totalJobs * qualityDef.cost).toFixed(2)}
+                Mockup Oluştur ({totalJobs}) ·{" "}
+                {perMockupCost === 0
+                  ? "ÜCRETSİZ"
+                  : `$${(totalJobs * perMockupCost).toFixed(2)}`}
               </>
             )}
           </Button>
 
           <div className="rounded-xl border border-slate-800/50 bg-slate-950/30 p-3 flex gap-2.5 text-[11px] text-slate-500 leading-relaxed">
             <AlertCircle className="h-4 w-4 shrink-0 text-slate-600 mt-0.5" />
-            {engine === "printful" ? (
-              <span>
-                Printful renk başına 1 default front mockup üretir (gerçek ürün
-                fotoğrafına overlay). Üretim ~10-15 saniye/renk.{" "}
-                <span className="text-emerald-400">Tamamen ücretsiz.</span>
+            <span>
+              Her renk × variant ayrı{" "}
+              <span className="text-slate-300 font-semibold">{engineMeta.label}</span>{" "}
+              çağrısıdır. 3&apos;lü gruplar halinde paralel çalışır.{" "}
+              <span className="text-slate-400">
+                {engine === "openai"
+                  ? "Ekonomik $0.015 · Standart $0.05 · Premium $0.20 / mockup"
+                  : engine === "gemini"
+                  ? "Gemini ücretsiz tier — günlük ~100 mockup limit (Google AI Studio)"
+                  : engine === "recraft"
+                  ? "Recraft v3 — ~25 mockup/gün ücretsiz, sonrasında $0.04 / mockup"
+                  : `${engineMeta.label}: ~$${engineMeta.costUsd.toFixed(3)} / mockup`}
               </span>
-            ) : (
-              <span>
-                Her renk × variant ayrı OpenAI çağrısıdır. 3&apos;lü gruplar halinde
-                paralel çalışır.{" "}
-                <span className="text-slate-400">
-                  Standart $0.05/mockup · Premium $0.20/mockup
-                </span>
-                .
-              </span>
-            )}
+              .
+            </span>
           </div>
         </div>
 
