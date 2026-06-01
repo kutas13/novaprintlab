@@ -27,6 +27,74 @@ interface PfFetchOptions {
   body?: unknown;
   query?: Record<string, string | number | undefined>;
   timeoutMs?: number;
+  /** When true, skip auto-injecting `X-PF-Store-Id` (used by getStoreId itself
+      to avoid infinite recursion + by store-agnostic endpoints like /v2/stores). */
+  skipStoreHeader?: boolean;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// STORE ID RESOLUTION
+//
+// Printful's v2 endpoints (mockup-tasks etc.) require an `X-PF-Store-Id`
+// header identifying which store the request is for. You can either:
+//   • set PRINTFUL_STORE_ID in env (preferred for production), OR
+//   • leave it blank — we'll call /v2/stores on first request and cache the
+//     first store the token has access to.
+// The cache lives for the lifetime of the serverless invocation (per-runtime
+// in-memory). Cheap (~10ms) miss on cold starts.
+// ────────────────────────────────────────────────────────────────────────────
+let cachedStoreId: string | null = null;
+let storeIdPromise: Promise<string> | null = null;
+
+interface StoreListItem {
+  id: number | string;
+  name?: string;
+  type?: string;
+}
+interface StoresResponse {
+  data?: StoreListItem[];
+  // V1 shape fallback (just in case)
+  result?: StoreListItem[];
+}
+
+async function fetchStoreIdFromApi(): Promise<string> {
+  const envOverride = (process.env.PRINTFUL_STORE_ID || "").trim();
+  if (envOverride) {
+    cachedStoreId = envOverride;
+    return envOverride;
+  }
+  const json = await pfFetch<StoresResponse>("/v2/stores", {
+    skipStoreHeader: true,
+  });
+  const list = json.data || json.result || [];
+  if (!list.length) {
+    throw new PrintfulError(
+      400,
+      "Printful tokenine bağlı hiç store yok. https://www.printful.com/dashboard → store oluştur. (Türkiye için Manual Order/API platform seçilebilir.)"
+    );
+  }
+  const first = list[0];
+  if (!first?.id) {
+    throw new PrintfulError(
+      500,
+      "Printful /v2/stores yanıtı beklenmedik şekilde — store id bulunamadı."
+    );
+  }
+  const id = String(first.id);
+  cachedStoreId = id;
+  return id;
+}
+
+async function getStoreId(): Promise<string> {
+  if (cachedStoreId) return cachedStoreId;
+  if (!storeIdPromise) {
+    storeIdPromise = fetchStoreIdFromApi().catch((e) => {
+      // Reset so a future caller can retry
+      storeIdPromise = null;
+      throw e;
+    });
+  }
+  return storeIdPromise;
 }
 
 async function pfFetch<T>(path: string, opts: PfFetchOptions = {}): Promise<T> {
@@ -47,6 +115,22 @@ async function pfFetch<T>(path: string, opts: PfFetchOptions = {}): Promise<T> {
     : "";
   const url = `${PRINTFUL_BASE}${path}${qs}`;
 
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+  if (!opts.skipStoreHeader) {
+    try {
+      const storeId = await getStoreId();
+      headers["X-PF-Store-Id"] = storeId;
+    } catch (e) {
+      // Bubble up; this is the most actionable error the user can see.
+      if (e instanceof PrintfulError) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new PrintfulError(500, `Printful store_id çözülemedi: ${msg}`);
+    }
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -55,10 +139,7 @@ async function pfFetch<T>(path: string, opts: PfFetchOptions = {}): Promise<T> {
   try {
     const res = await fetch(url, {
       method: opts.method ?? "GET",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       signal: controller.signal,
     });
@@ -70,12 +151,17 @@ async function pfFetch<T>(path: string, opts: PfFetchOptions = {}): Promise<T> {
       // non-JSON response (rare); we will fail loudly below
     }
     if (!res.ok) {
-      const msg =
+      const rawMsg =
         (parsed as { error?: { message?: string }; result?: string } | null)
           ?.error?.message ||
         (parsed as { result?: string } | null)?.result ||
         `Printful HTTP ${res.status}`;
-      throw new PrintfulError(res.status, msg, parsed);
+      // Turn the most common 400 ("requires store_id") into a hint pointing
+      // at the env var users can set themselves if /v2/stores didn't work.
+      const friendly = /requires\s+`?store_id`?/i.test(rawMsg)
+        ? `${rawMsg} — token'da "Stores" scope'u eksik olabilir. Çözüm: Printful Dashboard → API → Token'ı yeni baştan oluştur (Mockups + Stores + Catalog scope'larıyla) VEYA .env.local'a PRINTFUL_STORE_ID=<store_id> ekle.`
+        : rawMsg;
+      throw new PrintfulError(res.status, friendly, parsed);
     }
     return parsed as T;
   } catch (e) {
@@ -126,6 +212,8 @@ export async function listCatalogProducts(params?: {
   search?: string;
   limit?: number;
 }): Promise<PrintfulCatalogProduct[]> {
+  // Catalog endpoints are store-agnostic — skip X-PF-Store-Id so we don't
+  // need the "Stores" scope on the token just to browse the catalog.
   const json = await pfFetch<ListResp<PrintfulCatalogProduct>>(
     "/v2/catalog-products",
     {
@@ -133,6 +221,7 @@ export async function listCatalogProducts(params?: {
         ...(params?.search ? { name: params.search } : {}),
         limit: params?.limit ?? 50,
       },
+      skipStoreHeader: true,
     }
   );
   return json.data || [];
@@ -142,14 +231,13 @@ export async function listCatalogVariants(
   productId: number,
   limit = 100
 ): Promise<PrintfulCatalogVariant[]> {
-  // The endpoint is paginated. For one product variants usually fit in 100.
   const out: PrintfulCatalogVariant[] = [];
   let offset = 0;
   // 5 pages cap = 500 variants, plenty
   for (let i = 0; i < 5; i++) {
     const json = await pfFetch<ListResp<PrintfulCatalogVariant>>(
       `/v2/catalog-products/${productId}/catalog-variants`,
-      { query: { limit, offset } }
+      { query: { limit, offset }, skipStoreHeader: true }
     );
     const batch = json.data || [];
     out.push(...batch);

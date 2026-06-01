@@ -60,6 +60,33 @@ try {
     Write-Host "       ✗ Varyant çağrısı patladı: $($_.Exception.Message)" -ForegroundColor Red
 }
 
+# 4.5) Store ID resolve testi (yeni: v2 mockup task store_id ister)
+Write-Host ""
+Write-Host "[4.5/5] Printful store_id çözümlemesi..." -ForegroundColor Yellow
+try {
+    # /v2/stores doğrudan ping
+    $storesUrl = "https://api.printful.com/v2/stores"
+    $token = (Get-Content "$PSScriptRoot\.env.local" | Where-Object { $_ -match "^PRINTFUL_API_KEY=" }) -replace "^PRINTFUL_API_KEY=", ""
+    if ($token) {
+        $stores = Invoke-RestMethod -Uri $storesUrl -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15
+        if ($stores.data -and $stores.data.Count -gt 0) {
+            Write-Host "       ✓ Token'a bağlı $($stores.data.Count) store bulundu:" -ForegroundColor Green
+            $stores.data | Select-Object -First 4 | ForEach-Object {
+                Write-Host ("         · id={0,-12} name={1}" -f $_.id, $_.name) -ForegroundColor DarkGray
+            }
+            Write-Host "       ✓ İlk store id otomatik kullanılacak — manuel müdahale gerekmez." -ForegroundColor Green
+        } else {
+            Write-Host "       ✗ Token'a bağlı store YOK." -ForegroundColor Red
+            Write-Host "         → Printful Dashboard → store oluştur (Manual Order Platform seç)" -ForegroundColor Yellow
+        }
+    }
+} catch {
+    Write-Host "       ✗ /v2/stores çağrısı patladı: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "         → Token'ın 'Stores' scope'u yok olabilir. Çözüm:" -ForegroundColor Yellow
+    Write-Host "           Printful Dashboard → API → Token regenerate (tüm scope'lar)" -ForegroundColor Yellow
+    Write-Host "           VEYA .env.local'a PRINTFUL_STORE_ID=<id> elle ekle." -ForegroundColor Yellow
+}
+
 # 5) Git push (Vercel'e gönder)
 Write-Host ""
 Write-Host "[5/5] Git commit + push (Vercel'e deploy başlatır)..." -ForegroundColor Yellow
