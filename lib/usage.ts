@@ -16,20 +16,23 @@
 
 import { supabaseServer } from "./supabase-server";
 
-// Pricing — gpt-image-1 @ 1024x1024 per OpenAI published rates,
-// padded slightly so the daily cap never gets bypassed by rounding.
-//   low    ~ $0.011  → reserve $0.02
+// Pricing — gpt-image-1 @ 1024x1024 per OpenAI published rates (Jun 2026).
+// Numbers below are reserved (slightly above sticker so the daily cap never
+// gets bypassed by token-count rounding). Source: platform.openai.com/pricing
+//   low    ~ $0.011  → reserve $0.015
 //   medium ~ $0.042  → reserve $0.05
-//   high   ~ $0.167  → reserve $0.20
+//   high   ~ $0.167  → reserve $0.18
 export type Quality = "low" | "medium" | "high";
 
 export const QUALITY_COST_USD: Record<Quality, number> = {
-  low: 0.02,
+  low: 0.015,
   medium: 0.05,
-  high: 0.2,
+  high: 0.18,
 };
 
-export const DEFAULT_QUALITY: Quality = "medium";
+// Default switched from "medium" → "low" so the wallet stays safe by default;
+// users explicitly upgrade when they want extra fidelity.
+export const DEFAULT_QUALITY: Quality = "low";
 
 export function costForQuality(q: string | undefined | null): number {
   if (q === "low" || q === "medium" || q === "high") return QUALITY_COST_USD[q];

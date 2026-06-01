@@ -29,9 +29,25 @@ export const ETSY_LISTING_FEE = 0.2;
 export function calculateEtsyPrice(
   printifyCost: number,
   shippingCost: number,
-  targetProfit: number
-): { price: number; breakdown: { transactionFee: number; paymentFee: number; listingFee: number; netProfit: number } } {
-  const fixedCosts = printifyCost + shippingCost + ETSY_PAYMENT_FIXED + ETSY_LISTING_FEE;
+  targetProfit: number,
+  /**
+   * Optional accumulated AI generation cost (design + mockups) for this
+   * listing. Subtracted from net profit so the seller sees a realistic
+   * margin number even when OpenAI image gen was used in production.
+   */
+  aiCost: number = 0
+): {
+  price: number;
+  breakdown: {
+    transactionFee: number;
+    paymentFee: number;
+    listingFee: number;
+    aiCost: number;
+    netProfit: number;
+  };
+} {
+  const fixedCosts =
+    printifyCost + shippingCost + aiCost + ETSY_PAYMENT_FIXED + ETSY_LISTING_FEE;
   const percentMultiplier = 1 - ETSY_TRANSACTION_FEE - ETSY_PAYMENT_PERCENT;
   const rawPrice = (targetProfit + fixedCosts) / percentMultiplier;
   const price = Math.ceil(rawPrice * 100) / 100;
@@ -40,7 +56,13 @@ export function calculateEtsyPrice(
   const paymentFee = price * ETSY_PAYMENT_PERCENT + ETSY_PAYMENT_FIXED;
   const listingFee = ETSY_LISTING_FEE;
   const netProfit =
-    price - printifyCost - shippingCost - transactionFee - paymentFee - listingFee;
+    price -
+    printifyCost -
+    shippingCost -
+    aiCost -
+    transactionFee -
+    paymentFee -
+    listingFee;
 
   return {
     price,
@@ -48,6 +70,7 @@ export function calculateEtsyPrice(
       transactionFee,
       paymentFee,
       listingFee,
+      aiCost,
       netProfit,
     },
   };

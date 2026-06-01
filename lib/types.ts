@@ -47,6 +47,8 @@ export interface Design {
   mockups: MockupAsset[];
   seo?: SeoData;
   pricing?: PricingData;
+  /** Accumulated OpenAI cost for design + mockup generation (USD). */
+  aiCostUsd: number;
 }
 
 /** Row exactly as it lives in Supabase. */
@@ -65,6 +67,7 @@ export interface DesignRow {
   pricing_shipping_cost: string | number | null;
   pricing_target_profit: string | number | null;
   pricing_final_price: string | number | null;
+  ai_cost_usd?: string | number | null;
   created_at: string;
   updated_at: string;
   published_at: string | null;
@@ -268,5 +271,6 @@ export function rowToDesign(
     mockups,
     seo,
     pricing,
+    aiCostUsd: num(row.ai_cost_usd) ?? 0,
   };
 }

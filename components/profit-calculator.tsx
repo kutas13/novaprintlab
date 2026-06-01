@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Calculator, Lock, DollarSign, Percent } from "lucide-react";
+import { Calculator, Lock, DollarSign, Percent, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,12 @@ interface ProfitCalculatorProps {
   initial?: PricingData;
   onLock: (data: PricingData) => void | Promise<void>;
   busy?: boolean;
+  /**
+   * Auto-tracked AI generation cost for this design (design gen + all mockup
+   * gens). Shown as a read-only line-item that gets subtracted from net
+   * profit. Default 0 means "no AI cost recorded".
+   */
+  aiCost?: number;
 }
 
 const PROFIT_OPTIONS = [5, 10, 15, 20, 25, 30, 50] as const;
@@ -40,14 +46,19 @@ function inferPercent(profit: number, cost: number): number {
   return closest;
 }
 
-export function ProfitCalculator({ initial, onLock, busy }: ProfitCalculatorProps) {
+export function ProfitCalculator({
+  initial,
+  onLock,
+  busy,
+  aiCost = 0,
+}: ProfitCalculatorProps) {
   const [printifyCost, setPrintifyCost] = useState(initial?.printifyCost ?? 0);
   const [shippingCost, setShippingCost] = useState(initial?.shippingCost ?? 0);
   const [profitPercent, setProfitPercent] = useState<number>(() =>
     initial
       ? inferPercent(
           initial.targetProfit,
-          initial.printifyCost + initial.shippingCost
+          initial.printifyCost + initial.shippingCost + aiCost
         )
       : DEFAULT_PERCENT
   );
@@ -59,21 +70,23 @@ export function ProfitCalculator({ initial, onLock, busy }: ProfitCalculatorProp
       setProfitPercent(
         inferPercent(
           initial.targetProfit,
-          initial.printifyCost + initial.shippingCost
+          initial.printifyCost + initial.shippingCost + aiCost
         )
       );
     }
-  }, [initial]);
+  }, [initial, aiCost]);
 
-  const totalCost = printifyCost + shippingCost;
+  // AI cost is part of total cost for the percent-of-cost profit target so
+  // the seller's "%30 kâr" actually nets %30 of EVERYTHING they spent.
+  const totalCost = printifyCost + shippingCost + aiCost;
   const targetProfit = useMemo(
     () => (totalCost * profitPercent) / 100,
     [totalCost, profitPercent]
   );
 
   const result = useMemo(
-    () => calculateEtsyPrice(printifyCost, shippingCost, targetProfit),
-    [printifyCost, shippingCost, targetProfit]
+    () => calculateEtsyPrice(printifyCost, shippingCost, targetProfit, aiCost),
+    [printifyCost, shippingCost, targetProfit, aiCost]
   );
 
   const lockDisabled = busy || totalCost <= 0;

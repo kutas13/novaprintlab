@@ -326,6 +326,10 @@ export async function POST(req: Request) {
             prompt,
             size: "1024x1024",
             quality,
+            // JPEG output keeps payload ~4× smaller than PNG; mockup is
+            // photographic so JPEG artifacting is invisible at 85 quality.
+            output_format: "jpeg",
+            output_compression: 85,
           });
           b64 = res.data?.[0]?.b64_json;
           if (!b64) throw new Error("Mockup üretilemedi (boş yanıt).");
@@ -363,7 +367,7 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    const imageDataUrl = `data:image/png;base64,${b64}`;
+    const imageDataUrl = `data:image/jpeg;base64,${b64}`;
 
     return NextResponse.json({
       ok: true,

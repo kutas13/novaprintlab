@@ -84,25 +84,35 @@ const QUALITY_TIERS: { id: Quality; label: string; sub: string; cost: number; ac
     {
       id: "low",
       label: "Ekonomik",
-      sub: "Hızlı, basit detay",
-      cost: 0.02,
+      sub: "Önerilen · cüzdan dostu",
+      cost: 0.015,
       accent: "from-emerald-500 to-teal-500",
     },
     {
       id: "medium",
       label: "Standart",
-      sub: "Önerilen denge",
+      sub: "Detay biraz artar",
       cost: 0.05,
       accent: "from-blue-500 to-violet-500",
     },
     {
       id: "high",
       label: "Premium HD",
-      sub: "Maksimum detay",
-      cost: 0.2,
+      sub: "Maksimum detay · pahalı",
+      cost: 0.18,
       accent: "from-fuchsia-500 to-pink-500",
     },
   ];
+
+// 4 "essential" variants — for Etsy listing you usually only need a hero
+// folded shot, one male model, one female model, and a flat ghost mannequin.
+// Used as the cheap-by-default selection on first mount.
+const ESSENTIAL_VARIANTS = [
+  "folded",
+  "man-standing-1",
+  "woman-standing-1",
+  "flat-minimal",
+] as const;
 
 type VariantId = (typeof VARIANTS)[number]["id"];
 type ColorId = (typeof COLORS)[number]["id"];
@@ -199,10 +209,12 @@ export default function MockupPage() {
   const [productType, setProductType] =
     useState<(typeof PRODUCT_TYPES)[number]>("Tişört");
   const [selectedColors, setSelectedColors] = useState<ColorId[]>(["Siyah"]);
+  // Cheap-by-default: 4 essential variants × 1 color × low quality ≈ $0.06.
+  // User can opt into more via the "Hepsini seç" button or quality tiers.
   const [selectedVariants, setSelectedVariants] = useState<VariantId[]>(
-    VARIANTS.map((v) => v.id)
+    ESSENTIAL_VARIANTS as unknown as VariantId[]
   );
-  const [quality, setQuality] = useState<Quality>("medium");
+  const [quality, setQuality] = useState<Quality>("low");
   const qualityDef =
     QUALITY_TIERS.find((q) => q.id === quality) || QUALITY_TIERS[1];
 
@@ -1099,10 +1111,21 @@ export default function MockupPage() {
             </div>
             <p className="mt-2.5 text-[11px] text-slate-500 leading-relaxed">
               Bu üretim toplamda{" "}
-              <span className="font-bold text-slate-200 tabular-nums">
+              <span className="font-bold text-emerald-300 tabular-nums">
                 ${(totalJobs * qualityDef.cost).toFixed(2)}
               </span>{" "}
               olacak ({totalJobs} mockup × ${qualityDef.cost.toFixed(2)}).
+              {quality === "low" && (
+                <span className="block mt-1 text-emerald-400/80">
+                  Cüzdan modu aktif. Listeleme için 4 essential mockup +
+                  Ekonomik kalite genelde yeterli.
+                </span>
+              )}
+              {quality === "high" && (
+                <span className="block mt-1 text-amber-400/80">
+                  Premium HD ~12× pahalı. Sadece hero görsel için kullan.
+                </span>
+              )}
             </p>
           </Section>
 

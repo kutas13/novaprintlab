@@ -203,7 +203,7 @@ export default function OlusturPage() {
   const [type, setType] = useState<string>("");
   const [placement, setPlacement] = useState<string>("Ortalanmış");
   const [preset, setPreset] = useState<string>("");
-  const [quality, setQuality] = useState<"low" | "medium" | "high">("medium");
+  const [quality, setQuality] = useState<"low" | "medium" | "high">("low");
 
   // Reference image (optional inspiration / visual DNA)
   const [referenceImage, setReferenceImage] = useState<{
@@ -931,9 +931,9 @@ export default function OlusturPage() {
             <div className="grid grid-cols-3 gap-2">
               {(
                 [
-                  { id: "low", label: "Ekonomik", cost: 0.02, accent: "from-emerald-500 to-teal-500" },
+                  { id: "low", label: "Ekonomik", cost: 0.015, accent: "from-emerald-500 to-teal-500" },
                   { id: "medium", label: "Standart", cost: 0.05, accent: "from-blue-500 to-violet-500" },
-                  { id: "high", label: "Premium HD", cost: 0.2, accent: "from-fuchsia-500 to-pink-500" },
+                  { id: "high", label: "Premium HD", cost: 0.18, accent: "from-fuchsia-500 to-pink-500" },
                 ] as const
               ).map((q) => {
                 const active = quality === q.id;
