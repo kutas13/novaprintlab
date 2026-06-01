@@ -23,6 +23,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { UsageMeter } from "@/components/usage-meter";
 import { cn } from "@/lib/utils";
 import { useDesignStore } from "@/lib/store";
 
@@ -200,6 +201,7 @@ export default function OlusturPage() {
   const [type, setType] = useState<string>("");
   const [placement, setPlacement] = useState<string>("Ortalanmış");
   const [preset, setPreset] = useState<string>("");
+  const [quality, setQuality] = useState<"low" | "medium" | "high">("medium");
 
   const [generating, setGenerating] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
@@ -214,6 +216,18 @@ export default function OlusturPage() {
   const addDesignToStore = useDesignStore((s) => s.addDesign);
   const [approvedIds, setApprovedIds] = useState<string[]>([]);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  // Daily $5 usage snapshot (force-pushed to <UsageMeter />)
+  interface UsageSnapshot {
+    day: string;
+    costUsd: number;
+    mockupCount: number;
+    designCount: number;
+    limitUsd: number;
+    remainingUsd: number;
+    percent: number;
+  }
+  const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -237,7 +251,7 @@ export default function OlusturPage() {
 
   const handleApprove = async (item: GeneratedDesign) => {
     if (approvedIds.includes(item.id)) {
-      toast.info("Bu tasarım zaten Taha'ya gönderildi.");
+      toast.info("Bu tasarım zaten Kerim'e gönderildi.");
       return;
     }
     setApprovingId(item.id);
@@ -250,15 +264,17 @@ export default function OlusturPage() {
         .toLowerCase()
         .replace(/\s+/g, "-")}-${item.id}.png`;
       const file = await dataUrlToFile(item.imageDataUrl, filename);
+      // Status: "SEO Bekliyor" — first stop is Kerim for SEO,
+      // then Kerim's "Taha'ya Gönder" advances it to "Mockup ve Yayınlama Bekliyor"
       const design = await addDesignToStore(
         safe || "AI Tasarım",
         file,
         undefined,
-        "Mockup ve Yayınlama Bekliyor"
+        "SEO Bekliyor"
       );
       if (design) {
         persistApproved([item.id, ...approvedIds]);
-        toast.success(`"${design.name}" Taha'nın kuyruğuna eklendi.`);
+        toast.success(`"${design.name}" Kerim'in SEO kuyruğuna eklendi.`);
       } else {
         throw new Error("Tasarım eklenemedi.");
       }
@@ -320,9 +336,14 @@ export default function OlusturPage() {
           type: type || undefined,
           placement: placement || undefined,
           preset: preset || undefined,
+          quality,
         }),
       });
       const json = await res.json();
+      if (json?.usage) setUsageSnapshot(json.usage);
+      if (res.status === 429) {
+        throw new Error(json.error || "Günlük $5 limiti dolu");
+      }
       if (!res.ok || !json.ok) {
         throw new Error(json.error || "Tasarım üretilemedi.");
       }
@@ -471,6 +492,11 @@ export default function OlusturPage() {
           <Zap className="h-3 w-3" /> POD Engine v1
         </Badge>
       </PageHeader>
+
+      {/* ─── DAILY USAGE METER ─────────────────────────────────────────────── */}
+      <div className="mb-5">
+        <UsageMeter snapshot={usageSnapshot} />
+      </div>
 
       {/* ─── PRESETS BAR ──────────────────────────────────────────────────── */}
       <div className="mb-6">
@@ -717,6 +743,61 @@ export default function OlusturPage() {
               />
             ))}
           </OptionGroup>
+
+          {/* Quality picker — affects per-call OpenAI cost */}
+          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/40 backdrop-blur p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                Görsel Kalitesi
+              </p>
+              <span className="text-[10.5px] text-slate-500">
+                Daha düşük kalite = daha ucuz
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { id: "low", label: "Ekonomik", cost: 0.02, accent: "from-emerald-500 to-teal-500" },
+                  { id: "medium", label: "Standart", cost: 0.05, accent: "from-blue-500 to-violet-500" },
+                  { id: "high", label: "Premium HD", cost: 0.2, accent: "from-fuchsia-500 to-pink-500" },
+                ] as const
+              ).map((q) => {
+                const active = quality === q.id;
+                return (
+                  <button
+                    key={q.id}
+                    type="button"
+                    onClick={() => setQuality(q.id)}
+                    disabled={generating}
+                    className={cn(
+                      "p-2.5 rounded-xl text-left transition-all border disabled:opacity-50",
+                      active
+                        ? `bg-gradient-to-br ${q.accent} bg-opacity-10 border-white/15 ring-1 ring-white/10 shadow-elev-1`
+                        : "bg-slate-900/40 border-slate-800 hover:border-slate-700"
+                    )}
+                  >
+                    <p
+                      className={cn(
+                        "text-xs font-bold",
+                        active ? "text-white" : "text-slate-200"
+                      )}
+                    >
+                      {q.label}
+                    </p>
+                    <p
+                      className={cn(
+                        "text-[10.5px] font-bold tabular-nums mt-1",
+                        active ? "text-white" : "text-slate-400"
+                      )}
+                    >
+                      ${q.cost.toFixed(2)}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {/* Generate */}
           <Button
@@ -1048,24 +1129,25 @@ function ResultPanel({
               {approving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Taha&apos;ya gönderiliyor…
+                  Kerim&apos;e gönderiliyor…
                 </>
               ) : isApproved ? (
                 <>
                   <CheckCircle2 className="h-4 w-4" />
-                  Onaylandı — Taha&apos;nın kuyruğunda
+                  Onaylandı — Kerim&apos;in kuyruğunda
                 </>
               ) : (
                 <>
                   <Send className="h-4 w-4" />
-                  Onayla &amp; Taha&apos;ya Gönder
+                  Onayla &amp; Kerim&apos;e Gönder
                 </>
               )}
             </Button>
             <p className="text-[10.5px] text-slate-500 leading-relaxed">
               Onaylanan tasarım Supabase&apos;e kaydedilir ve{" "}
-              <span className="text-slate-400 font-medium">Mockup ve Yayınlama Bekliyor</span>{" "}
-              statüsünde Taha&apos;nın kuyruğuna düşer.
+              <span className="text-slate-400 font-medium">SEO Bekliyor</span>{" "}
+              statüsünde Kerim&apos;in kuyruğuna düşer. Kerim SEO yazıp Taha&apos;ya gönderdiğinde
+              hem Taha sayfasında hem Mockup Stüdyosunda otomatik görünür.
             </p>
           </div>
         )}
@@ -1186,12 +1268,12 @@ function HistoryCard({
           ) : isApproved ? (
             <>
               <CheckCircle2 className="h-3 w-3" />
-              Taha&apos;da
+              Kerim&apos;de
             </>
           ) : (
             <>
               <Send className="h-3 w-3" />
-              Taha&apos;ya Gönder
+              Kerim&apos;e Gönder
             </>
           )}
         </button>

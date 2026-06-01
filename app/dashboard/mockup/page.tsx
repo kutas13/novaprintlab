@@ -28,6 +28,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { UsageMeter } from "@/components/usage-meter";
 import { cn } from "@/lib/utils";
 import { useDesignStore } from "@/lib/store";
 
@@ -75,6 +76,33 @@ const VARIANTS = [
   { id: "woman-crosslegged", label: "Kadın Bağdaş", emoji: "🧘‍♀️" },
   { id: "flat-minimal", label: "Düz Minimal", emoji: "✨" },
 ] as const;
+
+type Quality = "low" | "medium" | "high";
+
+const QUALITY_TIERS: { id: Quality; label: string; sub: string; cost: number; accent: string }[] =
+  [
+    {
+      id: "low",
+      label: "Ekonomik",
+      sub: "Hızlı, basit detay",
+      cost: 0.02,
+      accent: "from-emerald-500 to-teal-500",
+    },
+    {
+      id: "medium",
+      label: "Standart",
+      sub: "Önerilen denge",
+      cost: 0.05,
+      accent: "from-blue-500 to-violet-500",
+    },
+    {
+      id: "high",
+      label: "Premium HD",
+      sub: "Maksimum detay",
+      cost: 0.2,
+      accent: "from-fuchsia-500 to-pink-500",
+    },
+  ];
 
 type VariantId = (typeof VARIANTS)[number]["id"];
 type ColorId = (typeof COLORS)[number]["id"];
@@ -133,6 +161,24 @@ export default function MockupPage() {
   useEffect(() => setMounted(true), []);
 
   const storeDesigns = useDesignStore((s) => s.designs);
+  const initStore = useDesignStore((s) => s.initialize);
+  const addMockups = useDesignStore((s) => s.addMockups);
+  const setDesignStatus = useDesignStore((s) => s.setStatus);
+  useEffect(() => {
+    initStore();
+  }, [initStore]);
+
+  // Only Kerim-approved designs without mockups go into Taha's mockup queue.
+  // Toggle lets him browse the entire store if needed.
+  const [showAllStore, setShowAllStore] = useState(false);
+  const taskedStoreDesigns = useMemo(
+    () =>
+      storeDesigns.filter(
+        (d) =>
+          d.status === "Mockup ve Yayınlama Bekliyor" && d.mockups.length === 0
+      ),
+    [storeDesigns]
+  );
 
   // AI designs from localStorage
   const [aiDesigns, setAiDesigns] = useState<AiHistoryItem[]>([]);
@@ -156,6 +202,9 @@ export default function MockupPage() {
   const [selectedVariants, setSelectedVariants] = useState<VariantId[]>(
     VARIANTS.map((v) => v.id)
   );
+  const [quality, setQuality] = useState<Quality>("medium");
+  const qualityDef =
+    QUALITY_TIERS.find((q) => q.id === quality) || QUALITY_TIERS[1];
 
   // Generation state
   type VariantStatus = "pending" | "doing" | "done" | "error";
@@ -167,6 +216,103 @@ export default function MockupPage() {
   // History + Modal
   const [history, setHistory] = useState<MockupSession[]>([]);
   const [modalImage, setModalImage] = useState<string | null>(null);
+
+  // Daily $5 usage snapshot (force-pushed to <UsageMeter />)
+  interface UsageSnapshot {
+    day: string;
+    costUsd: number;
+    mockupCount: number;
+    designCount: number;
+    limitUsd: number;
+    remainingUsd: number;
+    percent: number;
+  }
+  const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
+  const limitHitRef = useRef(false);
+
+  // Approval (Taslaklara gönder) — only available when source is a Supabase design
+  const [approving, setApproving] = useState(false);
+  const [approvedDesignIds, setApprovedDesignIds] = useState<string[]>([]);
+
+  const APPROVAL_KEY = "novaprint:mockup-approvals";
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(APPROVAL_KEY);
+      if (raw) setApprovedDesignIds(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  const persistApprovals = useCallback((next: string[]) => {
+    setApprovedDesignIds(next);
+    try {
+      localStorage.setItem(APPROVAL_KEY, JSON.stringify(next));
+    } catch {}
+  }, []);
+
+  const dataUrlToFile = useCallback(
+    async (dataUrl: string, filename: string): Promise<File> => {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      return new File([blob], filename, { type: blob.type || "image/jpeg" });
+    },
+    []
+  );
+
+  const handleApproveToDrafts = useCallback(async () => {
+    if (
+      !selectedDesign ||
+      selectedDesign.type !== "store" ||
+      results.length === 0
+    )
+      return;
+    const designId = selectedDesign.id;
+    if (approvedDesignIds.includes(designId)) {
+      toast.info("Bu tasarımın mockupları zaten Taslaklara gönderildi.");
+      return;
+    }
+    setApproving(true);
+    const toastId = `approve-${designId}`;
+    toast.loading(`${results.length} mockup yükleniyor…`, { id: toastId });
+    try {
+      const files: File[] = await Promise.all(
+        results.map((r) =>
+          dataUrlToFile(
+            r.imageDataUrl,
+            `${slugify(productType)}-${slugify(r.color)}-${r.variantId}.jpg`
+          )
+        )
+      );
+      await addMockups(designId, files);
+      await setDesignStatus(designId, "Taslak");
+      persistApprovals([designId, ...approvedDesignIds]);
+      toast.success(
+        `${results.length} mockup Taslaklara gönderildi. Sayfa: /dashboard/taslaklar`,
+        { id: toastId, duration: 6000 }
+      );
+      // Clear the workspace so Taha can move to the next design
+      setSelectedDesign(null);
+      setResults([]);
+      setProgress({});
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Onay başarısız";
+      toast.error(`Taslağa gönderme başarısız: ${msg}`, {
+        id: toastId,
+        duration: 8000,
+      });
+    } finally {
+      setApproving(false);
+    }
+  }, [
+    selectedDesign,
+    results,
+    approvedDesignIds,
+    productType,
+    addMockups,
+    setDesignStatus,
+    persistApprovals,
+    dataUrlToFile,
+  ]);
 
   // ─── Load persisted state ─────────────────────────────────────────────────
   useEffect(() => {
@@ -252,6 +398,7 @@ export default function MockupPage() {
     setGenerating(true);
     setResults([]);
     setErrors({});
+    limitHitRef.current = false;
 
     // Build all (color × variant) jobs
     type Job = { color: ColorId; variantId: VariantId };
@@ -284,6 +431,17 @@ export default function MockupPage() {
         return next;
       });
 
+      // Stop early if a previous batch hit the daily cap — no point billing more.
+      if (limitHitRef.current) {
+        batch.forEach((j) => {
+          const key = slotKey(j.color, j.variantId);
+          collectedErrors[key] = "Günlük $5 limiti dolu";
+          setErrors((prev) => ({ ...prev, [key]: "Günlük $5 limiti dolu" }));
+          setProgress((prev) => ({ ...prev, [key]: "error" }));
+        });
+        continue;
+      }
+
       await Promise.all(
         batch.map(async (job) => {
           const key = slotKey(job.color, job.variantId);
@@ -295,10 +453,17 @@ export default function MockupPage() {
                 variantId: job.variantId,
                 productType,
                 color: job.color,
+                quality,
                 ...designPayload,
               }),
             });
             const json = await r.json();
+            // Push usage snapshot to the meter even on errors
+            if (json?.usage) setUsageSnapshot(json.usage);
+            if (r.status === 429) {
+              limitHitRef.current = true;
+              throw new Error(json.error || "Günlük $5 limiti dolu");
+            }
             if (!r.ok || !json.ok)
               throw new Error(json.error || "Mockup üretilemedi.");
             const item: MockupResult = {
@@ -352,11 +517,18 @@ export default function MockupPage() {
     persistHistory([session, ...history].slice(0, HISTORY_LIMIT));
 
     const failedCount = Object.keys(collectedErrors).length;
-    toast.success(
-      `${collected.length} mockup üretildi${
-        failedCount > 0 ? ` (${failedCount} başarısız)` : ""
-      }`
-    );
+    if (limitHitRef.current) {
+      toast.error(
+        `Günlük $5 OpenAI limiti doldu — ${collected.length} mockup tamamlandı, ${failedCount} atlandı.`,
+        { duration: 8000 }
+      );
+    } else if (collected.length > 0) {
+      toast.success(
+        `${collected.length} mockup üretildi${
+          failedCount > 0 ? ` (${failedCount} başarısız)` : ""
+        }`
+      );
+    }
   };
 
   // ─── Download helpers ────────────────────────────────────────────────────
@@ -407,6 +579,7 @@ export default function MockupPage() {
   };
 
   // ─── Render ──────────────────────────────────────────────────────────────
+  const storeListForVisible = showAllStore ? storeDesigns : taskedStoreDesigns;
   const visibleDesigns: DesignSource[] = useMemo(() => {
     if (activeSource === "ai")
       return aiDesigns.map((d) => ({
@@ -416,7 +589,7 @@ export default function MockupPage() {
         imageDataUrl: d.imageDataUrl,
       }));
     if (activeSource === "store")
-      return storeDesigns.map((d) => ({
+      return storeListForVisible.map((d) => ({
         type: "store" as const,
         id: d.id,
         name: d.name,
@@ -428,11 +601,15 @@ export default function MockupPage() {
       name: d.name,
       imageDataUrl: d.imageDataUrl,
     }));
-  }, [activeSource, aiDesigns, storeDesigns, uploadedDesigns]);
+  }, [activeSource, aiDesigns, storeListForVisible, uploadedDesigns]);
 
   const SOURCES = [
     { id: "ai", label: "AI Tasarımlarım", count: aiDesigns.length },
-    { id: "store", label: "Mağaza Tasarımları", count: storeDesigns.length },
+    {
+      id: "store",
+      label: "Kerim'den Gelen",
+      count: taskedStoreDesigns.length,
+    },
     { id: "upload", label: "PNG Yükle", count: uploadedDesigns.length },
   ] as const;
 
@@ -452,6 +629,9 @@ export default function MockupPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)] gap-5">
         {/* ─── LEFT PANEL ─── */}
         <div className="space-y-4">
+          {/* Daily $5 OpenAI usage meter */}
+          <UsageMeter snapshot={usageSnapshot} />
+
           {/* Design source picker */}
           <Section title="1. Tasarım Kaynağı" icon={<Sparkles className="h-4 w-4 text-blue-400" />}>
             <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950/50 border border-slate-800 mb-3">
@@ -493,6 +673,21 @@ export default function MockupPage() {
               />
             )}
 
+            {mounted && activeSource === "store" && (
+              <div className="flex items-center justify-between mb-2 px-1">
+                <p className="text-[10.5px] text-slate-500 leading-snug">
+                  {showAllStore
+                    ? "Tüm mağaza tasarımları"
+                    : "Sadece Kerim'in SEO'sunu yapıp mockup bekleyen tasarımlar"}
+                </p>
+                <button
+                  onClick={() => setShowAllStore((v) => !v)}
+                  className="text-[11px] font-semibold text-blue-300 hover:text-blue-200"
+                >
+                  {showAllStore ? "Sadece kuyruk" : "Hepsini göster"}
+                </button>
+              </div>
+            )}
             {mounted && (
               <DesignGrid
                 designs={visibleDesigns}
@@ -502,7 +697,9 @@ export default function MockupPage() {
                   activeSource === "ai"
                     ? "Henüz AI tasarım üretmedin. /olustur sayfasına git."
                     : activeSource === "store"
-                      ? "Mağazada tasarım yok. Yusuf'un yüklediği ürünler burada görünür."
+                      ? showAllStore
+                        ? "Mağazada hiç tasarım yok."
+                        : "Kerim'den gelen mockup kuyruğu boş. Kerim SEO yaptıktan sonra burada görünürler."
                       : "Yüklü tasarım yok. Üstten PNG sürükle veya seç."
                 }
               />
@@ -695,6 +892,57 @@ export default function MockupPage() {
             </div>
           </Section>
 
+          {/* Quality tier */}
+          <Section
+            title="5. Görsel Kalitesi"
+            icon={<Sparkles className="h-4 w-4 text-amber-400" />}
+          >
+            <div className="grid grid-cols-3 gap-2">
+              {QUALITY_TIERS.map((q) => {
+                const active = quality === q.id;
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => setQuality(q.id)}
+                    className={cn(
+                      "p-2.5 rounded-xl text-left transition-all border",
+                      active
+                        ? `bg-gradient-to-br ${q.accent} bg-opacity-10 border-white/15 ring-1 ring-white/10 shadow-elev-1`
+                        : "bg-slate-900/40 border-slate-800 hover:border-slate-700"
+                    )}
+                  >
+                    <p
+                      className={cn(
+                        "text-xs font-bold",
+                        active ? "text-white" : "text-slate-200"
+                      )}
+                    >
+                      {q.label}
+                    </p>
+                    <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                      {q.sub}
+                    </p>
+                    <p
+                      className={cn(
+                        "text-[10.5px] font-bold tabular-nums mt-1.5",
+                        active ? "text-white" : "text-slate-400"
+                      )}
+                    >
+                      ${q.cost.toFixed(2)}/adet
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2.5 text-[11px] text-slate-500 leading-relaxed">
+              Bu üretim toplamda{" "}
+              <span className="font-bold text-slate-200 tabular-nums">
+                ${(totalJobs * qualityDef.cost).toFixed(2)}
+              </span>{" "}
+              olacak ({totalJobs} mockup × ${qualityDef.cost.toFixed(2)}).
+            </p>
+          </Section>
+
           <Button
             onClick={handleGenerate}
             disabled={
@@ -714,7 +962,7 @@ export default function MockupPage() {
             ) : (
               <>
                 <Sparkles className="h-5 w-5" />
-                Mockup Oluştur ({totalJobs})
+                Mockup Oluştur ({totalJobs}) · ${(totalJobs * qualityDef.cost).toFixed(2)}
               </>
             )}
           </Button>
@@ -723,8 +971,11 @@ export default function MockupPage() {
             <AlertCircle className="h-4 w-4 shrink-0 text-slate-600 mt-0.5" />
             <span>
               Her renk × variant ayrı OpenAI çağrısıdır. 3&apos;lü gruplar halinde
-              paralel çalışır. Her variant ~30 sn.{" "}
-              <span className="text-slate-400">JPEG 1024×1024</span>.
+              paralel çalışır.{" "}
+              <span className="text-slate-400">
+                Standart $0.05/mockup · Premium $0.20/mockup
+              </span>
+              .
             </span>
           </div>
         </div>
@@ -741,6 +992,15 @@ export default function MockupPage() {
             onDownloadOne={downloadOne}
             onDownloadAll={downloadAllZip}
             onPreview={setModalImage}
+            canApproveToDrafts={
+              !!selectedDesign && selectedDesign.type === "store"
+            }
+            isApproving={approving}
+            isAlreadyApproved={
+              !!selectedDesign &&
+              approvedDesignIds.includes(selectedDesign.id)
+            }
+            onApproveToDrafts={handleApproveToDrafts}
           />
         </div>
       </div>
@@ -784,6 +1044,10 @@ export default function MockupPage() {
                 key={sess.id}
                 session={sess}
                 onPreview={setModalImage}
+                onDelete={() => {
+                  persistHistory(history.filter((s) => s.id !== sess.id));
+                  toast.success("Oturum silindi");
+                }}
               />
             ))}
           </div>
@@ -948,6 +1212,10 @@ function ResultGrid({
   onDownloadOne,
   onDownloadAll,
   onPreview,
+  canApproveToDrafts,
+  isApproving,
+  isAlreadyApproved,
+  onApproveToDrafts,
 }: {
   results: MockupResult[];
   progress: Record<string, "pending" | "doing" | "done" | "error">;
@@ -958,6 +1226,10 @@ function ResultGrid({
   onDownloadOne: (item: MockupResult) => void;
   onDownloadAll: () => void;
   onPreview: (src: string) => void;
+  canApproveToDrafts: boolean;
+  isApproving: boolean;
+  isAlreadyApproved: boolean;
+  onApproveToDrafts: () => void;
 }) {
   const hasAny = results.length > 0;
   const resultColors = Array.from(new Set(results.map((r) => r.color)));
@@ -997,17 +1269,51 @@ function ResultGrid({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 className="text-lg font-bold text-white">
           {hasAny ? "Üretilen Mockuplar" : "Mockuplar burada görünecek"}
         </h2>
         {hasAny && (
-          <Button onClick={onDownloadAll} size="sm" variant="success">
-            <Archive className="h-3.5 w-3.5" />
-            Hepsini ZIP İndir
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={onDownloadAll} size="sm" variant="success">
+              <Archive className="h-3.5 w-3.5" />
+              Hepsini ZIP İndir
+            </Button>
+            {canApproveToDrafts && (
+              <Button
+                onClick={onApproveToDrafts}
+                disabled={isApproving || isAlreadyApproved || generating}
+                size="sm"
+                className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white shadow-lg shadow-emerald-500/20"
+              >
+                {isApproving ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Yükleniyor…
+                  </>
+                ) : isAlreadyApproved ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Taslağa Gönderildi
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Onayla &amp; Taslaklara Gönder
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         )}
       </div>
+      {hasAny && canApproveToDrafts && !isAlreadyApproved && (
+        <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+          Onayladığında {results.length} mockup tasarıma eklenir ve durum{" "}
+          <span className="text-slate-300 font-medium">Taslak</span> olur. Yusuf
+          taslaklar sayfasından devam edebilir.
+        </p>
+      )}
 
       {colorsToShow.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-12 text-center">
@@ -1157,10 +1463,94 @@ function ResultGrid({
 function HistorySession({
   session,
   onPreview,
+  onDelete,
 }: {
   session: MockupSession;
   onPreview: (src: string) => void;
+  onDelete: () => void;
 }) {
+  const [zipBusy, setZipBusy] = useState<string | null>(null);
+
+  const downloadOneResult = (r: MockupResult) => {
+    const link = document.createElement("a");
+    link.href = r.imageDataUrl;
+    link.download = `${slugify(session.productType)}-${slugify(r.color || "color")}-${r.variantId}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadAllZip = async () => {
+    setZipBusy("all");
+    toast.loading("ZIP hazırlanıyor…", { id: `zip-${session.id}` });
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      const hasMultipleColors =
+        new Set(session.results.map((r) => r.color || "color")).size > 1;
+      session.results.forEach((r) => {
+        const m = r.imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (!m) return;
+        const color = r.color || "color";
+        const path = hasMultipleColors
+          ? `${slugify(color)}/${slugify(session.productType)}-${slugify(color)}-${r.variantId}.jpg`
+          : `${slugify(session.productType)}-${slugify(color)}-${r.variantId}.jpg`;
+        zip.file(path, m[1], { base64: true });
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const date = new Date(session.createdAt).toISOString().split("T")[0];
+      link.download = `mockups-${slugify(session.productType)}-${date}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("ZIP indirildi", { id: `zip-${session.id}` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Hata";
+      toast.error(`ZIP hatası: ${msg}`, { id: `zip-${session.id}` });
+    } finally {
+      setZipBusy(null);
+    }
+  };
+
+  const downloadColorZip = async (color: string) => {
+    const items = session.results.filter((r) => (r.color || "") === color);
+    if (items.length === 0) return;
+    setZipBusy(color);
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      items.forEach((r) => {
+        const m = r.imageDataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (!m) return;
+        zip.file(
+          `${slugify(session.productType)}-${slugify(color)}-${r.variantId}.jpg`,
+          m[1],
+          { base64: true }
+        );
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const date = new Date(session.createdAt).toISOString().split("T")[0];
+      link.download = `mockups-${slugify(session.productType)}-${slugify(color)}-${date}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success(`${color} ZIP indirildi`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Hata";
+      toast.error(`ZIP hatası: ${msg}`);
+    } finally {
+      setZipBusy(null);
+    }
+  };
+
   // Backward-compat: older sessions stored a single `color` instead of `colors`
   const sessionColors: string[] =
     session.colors && session.colors.length > 0
@@ -1215,31 +1605,73 @@ function HistorySession({
           </div>
         </div>
         <Badge variant="info">{session.results.length} mockup</Badge>
+        <div className="flex items-center gap-1.5">
+          <Button
+            onClick={downloadAllZip}
+            disabled={zipBusy !== null}
+            size="sm"
+            variant="success"
+          >
+            {zipBusy === "all" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Archive className="h-3.5 w-3.5" />
+            )}
+            ZIP İndir
+          </Button>
+          <button
+            onClick={() => {
+              if (confirm("Bu oturum geçmişten silinsin mi?")) onDelete();
+            }}
+            className="h-8 w-8 rounded-lg bg-slate-800/60 hover:bg-red-500/15 hover:text-red-400 text-slate-400 flex items-center justify-center transition-colors"
+            aria-label="Sil"
+            title="Bu oturumu sil"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3 mt-1">
         {grouped.map((g) => (
           <div key={g.color}>
-            {sessionColors.length > 1 && (
-              <p className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                <span
-                  className="h-2.5 w-2.5 rounded-full ring-1 ring-slate-700"
-                  style={{
-                    background:
-                      COLORS.find((x) => x.id === g.color)?.swatch || "#777",
-                  }}
-                />
-                {g.color}
-                <span className="text-slate-600 font-normal">
-                  · {g.items.length} mockup
-                </span>
-              </p>
-            )}
+            <div className="flex items-center justify-between mb-1.5">
+              {sessionColors.length > 1 ? (
+                <p className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full ring-1 ring-slate-700"
+                    style={{
+                      background:
+                        COLORS.find((x) => x.id === g.color)?.swatch || "#777",
+                    }}
+                  />
+                  {g.color}
+                  <span className="text-slate-600 font-normal">
+                    · {g.items.length} mockup
+                  </span>
+                </p>
+              ) : (
+                <span />
+              )}
+              {sessionColors.length > 1 && (
+                <button
+                  onClick={() => downloadColorZip(g.color)}
+                  disabled={zipBusy !== null}
+                  className="text-[11px] font-semibold text-blue-300 hover:text-blue-200 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-blue-500/10 transition-colors disabled:opacity-50"
+                >
+                  {zipBusy === g.color ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Archive className="h-3 w-3" />
+                  )}
+                  {g.color} ZIP
+                </button>
+              )}
+            </div>
             <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
               {g.items.map((r) => (
-                <button
+                <div
                   key={`${r.color}-${r.variantId}`}
-                  onClick={() => onPreview(r.imageDataUrl)}
                   className="aspect-square rounded-lg overflow-hidden border border-slate-800 hover:border-slate-700 transition-all group relative"
                   title={r.label}
                 >
@@ -1247,9 +1679,21 @@ function HistorySession({
                   <img
                     src={r.imageDataUrl}
                     alt={r.label}
-                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    onClick={() => onPreview(r.imageDataUrl)}
+                    className="absolute inset-0 w-full h-full object-cover cursor-zoom-in group-hover:scale-105 transition-transform"
                   />
-                </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadOneResult(r);
+                    }}
+                    className="absolute bottom-1 right-1 h-6 w-6 rounded-md bg-slate-950/85 hover:bg-emerald-500/85 text-white opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center shadow-md"
+                    aria-label="İndir"
+                    title="JPEG indir"
+                  >
+                    <Download className="h-3 w-3" />
+                  </button>
+                </div>
               ))}
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import OpenAI, { toFile } from "openai";
+import { reserve, refund, costForQuality, normalizeQuality } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -37,6 +38,7 @@ interface RequestBody {
   color?: ProductColor;
   designDataUrl?: string; // data:image/png;base64,...
   designUrl?: string; // remote https url (e.g. supabase public url)
+  quality?: "low" | "medium" | "high"; // default: medium
 }
 
 // ─── PRODUCT MAP ────────────────────────────────────────────────────────────
@@ -118,7 +120,7 @@ const VARIANTS: Record<VariantId, VariantSpec> = {
     id: "folded",
     label: "Katlanmış Ürün",
     prompt: (ctx) =>
-      `Premium flat-lay product photo of a folded ${ctx.color} ${ctx.product} on a clean light gray seamless paper studio background. ${ctx.weight}. The folded garment sits in the center of the frame with one corner subtly raised so the collar and front panel are clearly visible. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Soft top-down natural studio light, gentle shadows, no model, no props, no people. ${QUALITY_TAIL}`,
+      `Cozy at-home lifestyle top-down photo of a freshly folded ${ctx.color} ${ctx.product} placed neatly on a warm modern home surface — a wooden wardrobe shelf or a soft cream linen bed, NOT a studio paper backdrop. ${ctx.weight}. The HERO folded garment sits centered in the frame with one corner softly raised so the collar and chest print are clearly visible. UNDERNEATH and beside the hero shirt sit a small neat stack of 2 to 3 additional plain folded t-shirts in soft neutral tones (white, beige, light gray, sand) — these supporting shirts are BLANK, no prints, no logos, slightly out of focus so the printed hero shirt stays the main subject. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Warm natural window light from one side, soft golden-hour glow, gentle morning shadows, cozy modern home / wardrobe vibe. Minimal supporting texture is welcome at the edges (visible wood grain or woven linen) but no clutter, no other branded items, no people, no model. ${QUALITY_TAIL}`,
   },
   "man-standing-1": {
     id: "man-standing-1",
@@ -160,7 +162,7 @@ const VARIANTS: Record<VariantId, VariantSpec> = {
     id: "flat-minimal",
     label: "Düz Minimal Görünüm",
     prompt: (ctx) =>
-      `Premium ghost-mannequin / invisible-mannequin flat product photo of a ${ctx.color} ${ctx.product} laid perfectly straight and centered on a clean off-white seamless studio backdrop, collar clearly visible at the top of the frame. ${ctx.weight}. The garment appears to float, holding its perfect silhouette. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Soft even studio lighting from both sides, sharp focus, minimal subtle shadow beneath. No people, no props. Premium minimal Shopify listing primary image. ${QUALITY_TAIL}`,
+      `Modern minimalist boutique showroom display photo of a ${ctx.color} ${ctx.product}, presented as the hero piece of a premium fashion flagship. The garment is laid perfectly straight and centered using a ghost-mannequin / invisible-mannequin effect — it appears to float and holds its perfect silhouette with the collar clearly visible at the top of the frame. ${ctx.weight}. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} The background is a softly out-of-focus modern showroom interior: warm off-white plastered walls, light oak wooden display fixtures, a minimalist floating display shelf or a single tasteful design accent piece far behind the product, gentle architectural lines — premium boutique vibe but completely uncluttered. Soft balanced showroom lighting (subtle key + soft fill), natural directional shadow beneath the garment, sharp focus on the product, no people, no other clothing visible in the foreground. Designer flagship store catalog aesthetic, contemporary modern fashion brand minimalism, magazine campaign feel. ${QUALITY_TAIL}`,
   },
 };
 
@@ -252,27 +254,42 @@ export async function POST(req: Request) {
       isTee: productType === "Tişört",
     });
 
-    const openai = new OpenAI({ apiKey });
+    // ─── Daily $5 cap — reserve before calling OpenAI ───────────────────
+    const quality = normalizeQuality(body.quality);
+    const cost = costForQuality(quality);
 
-    const file = await toFile(designBuffer, "design.png", { type: "image/png" });
-
-    const res = await openai.images.edit({
-      model: "gpt-image-1",
-      image: file,
-      prompt,
-      size: "1024x1024",
-      quality: "high",
-      // gpt-image-1 doesn't accept response_format; b64_json is the default
-    });
-
-    const b64 = res.data?.[0]?.b64_json;
-    if (!b64) {
-      throw new Error("Mockup üretilemedi (boş yanıt).");
+    const reservation = await reserve("mockup", cost);
+    if (!reservation.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: reservation.error,
+          usage: reservation.snapshot,
+        },
+        { status: 429 }
+      );
     }
 
-    // Frontend expects JPEG; OpenAI returns PNG. We just label correctly.
-    // We don't transcode server-side to keep latency low; the PNG opens
-    // identically in browsers and download flow renames to .jpg if desired.
+    const openai = new OpenAI({ apiKey });
+    const file = await toFile(designBuffer, "design.png", { type: "image/png" });
+
+    let b64: string | undefined;
+    try {
+      const res = await openai.images.edit({
+        model: "gpt-image-1",
+        image: file,
+        prompt,
+        size: "1024x1024",
+        quality,
+      });
+      b64 = res.data?.[0]?.b64_json;
+      if (!b64) throw new Error("Mockup üretilemedi (boş yanıt).");
+    } catch (e) {
+      // Roll back the pre-charge so a failed call doesn't eat budget
+      await refund("mockup", cost);
+      throw e;
+    }
+
     const imageDataUrl = `data:image/png;base64,${b64}`;
 
     return NextResponse.json({
@@ -281,6 +298,9 @@ export async function POST(req: Request) {
       label: spec.label,
       prompt,
       imageDataUrl,
+      quality,
+      cost,
+      usage: reservation.snapshot,
     });
   } catch (err) {
     const message =

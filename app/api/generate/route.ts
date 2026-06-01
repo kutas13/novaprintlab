@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { reserve, refund, costForQuality, normalizeQuality } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -24,6 +25,7 @@ interface RequestBody {
   type?: string;
   placement?: string;
   preset?: string;         // optional preset id
+  quality?: "low" | "medium" | "high"; // image-gen quality, default medium
 }
 
 // ─── STYLE ENGINE ───────────────────────────────────────────────────────────
@@ -374,7 +376,8 @@ async function randomIdea(openai: OpenAI): Promise<string> {
 // ─── IMAGE GENERATION ───────────────────────────────────────────────────────
 async function generateImage(
   openai: OpenAI,
-  englishPrompt: string
+  englishPrompt: string,
+  quality: "low" | "medium" | "high"
 ): Promise<string> {
   const res = await openai.images.generate({
     model: "gpt-image-1",
@@ -383,7 +386,7 @@ async function generateImage(
     size: "1024x1024",
     background: "transparent",
     output_format: "png",
-    quality: "high",
+    quality,
   });
   const b64 = res.data?.[0]?.b64_json;
   if (!b64) throw new Error("Görsel üretilemedi (boş yanıt).");
@@ -471,13 +474,39 @@ export async function POST(req: Request) {
       placement,
       preset,
     });
-    const imageDataUrl = await generateImage(openai, englishPrompt);
+
+    // ─── Daily $5 cap — reserve before calling OpenAI image gen ────────
+    const quality = normalizeQuality(body.quality);
+    const cost = costForQuality(quality);
+
+    const reservation = await reserve("design", cost);
+    if (!reservation.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: reservation.error,
+          usage: reservation.snapshot,
+        },
+        { status: 429 }
+      );
+    }
+
+    let imageDataUrl: string;
+    try {
+      imageDataUrl = await generateImage(openai, englishPrompt, quality);
+    } catch (e) {
+      await refund("design", cost);
+      throw e;
+    }
 
     return NextResponse.json({
       ok: true,
       concept,
       englishPrompt,
       imageDataUrl,
+      quality,
+      cost,
+      usage: reservation.snapshot,
     });
   } catch (err) {
     const message =

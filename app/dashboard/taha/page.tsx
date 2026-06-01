@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Image as ImageIcon,
   Search,
@@ -10,6 +11,7 @@ import {
   Hourglass,
   FileEdit,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -94,7 +96,7 @@ export default function TahaPage() {
     <div>
       <PageHeader
         title="Mockup Atölyesi"
-        description="Tasarımı indir, SEO'yu kopyala, mockup'ı yükle ve Yusuf'a gönder. Fiyat & yayın Yusuf'ta tamamlanır."
+        description="Kerim SEO'yu bitirir bitirmez tasarım buraya düşer. AI Mockup Stüdyosunda mockupları üret, onayla — taslaklara otomatik düşsün."
         icon={<ImageIcon className="h-5 w-5" />}
         accent="from-amber-500 to-orange-500"
       >
@@ -102,6 +104,13 @@ export default function TahaPage() {
           <Hourglass className="h-3 w-3" />
           {counts.queue} bekleyen
         </Badge>
+        <Link
+          href="/dashboard/mockup"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 hover:from-blue-400 hover:to-violet-400 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg shadow-blue-500/20 transition-all hover:-translate-y-0.5"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          AI Mockup Stüdyosu
+        </Link>
       </PageHeader>
 
       {/* Workflow stats */}
