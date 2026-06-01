@@ -83,9 +83,27 @@ const COLOR_MAP: Record<ProductColor, string> = {
   Bej: "warm sand beige",
 };
 
+// ─── DESIGN PRESERVATION LOCK (TOP-PRIORITY DIRECTIVE) ─────────────────────
+// Prepended to EVERY mockup prompt. The image gen model has a strong tendency
+// to "re-interpret" the supplied artwork (changing fonts, recoloring, redrawing
+// shapes, translating text, replacing illustrations). This lock makes the
+// preservation rule the FIRST and HIGHEST priority instruction in the prompt.
+const DESIGN_PRESERVATION_LOCK =
+  "ABSOLUTE TOP PRIORITY — DESIGN ASSET PRESERVATION RULE (read this BEFORE anything else): The supplied input image is a FINISHED, FINALIZED print design. You MUST treat that artwork as a SEALED, IMMUTABLE asset — like a printed sticker that is already on the shirt. " +
+  "DO NOT redraw the design. " +
+  "DO NOT change any letter, word, text, typography, font, character, language, or word order. " +
+  "DO NOT translate or substitute any text. " +
+  "DO NOT change the colors of the design (ink colors, palette, hue, saturation, contrast). " +
+  "DO NOT change the shapes, illustrations, icons, logos, characters, or composition of the design. " +
+  "DO NOT add new text, captions, taglines, signatures, watermarks, or extra graphics into the design. " +
+  "DO NOT crop, mirror, rotate, stretch, or rearrange the design. " +
+  "DO NOT 'improve', 'clean up', or 'reinterpret' the design — its current state is final. " +
+  "Your ONLY job regarding the design is to project it AS-IS onto the garment fabric and add ONLY natural fabric folds, lighting and shadow OVER it (as if it were a real high-quality screen print already on the shirt). " +
+  "Pixel-for-pixel, the design content must remain identical to the supplied image.";
+
 // ─── VARIANT PROMPT ENGINE ─────────────────────────────────────────────────
 const PRINT_PLACEMENT_HINT =
-  "Place the provided design PNG centered on the chest of the garment as a high-quality screen print. The print MUST follow the fabric folds, wrinkles, lighting and shadows realistically — not pasted flat. Keep the original colors, transparency edges and details of the design intact.";
+  "Project the supplied design (exact pixels, unchanged) centered on the chest of the garment as if it is already an existing screen print on the fabric. The print should sit naturally over the fabric — gently following the fabric folds, wrinkles, lighting and shadows for realism — but the design content, letters, fonts, colors and shapes MUST remain identical to the supplied input image. Do not redraw, retype, retranslate, or recolor any part of the design.";
 
 // Negative / construction-lock list — appended to EVERY tee prompt to stop
 // the model from drifting into chunky/mock necks or fashion-oversized fits.
@@ -93,7 +111,8 @@ const TEE_NEGATIVE_LOCK =
   "STRICT garment rules: the collar must be a SLIM and NORMAL THICKNESS ribbed crewneck (about 1.5cm) — absolutely NOT a thick collar, NOT a mock neck, NOT a turtleneck, NOT a rolled neck, NOT a chunky band. The fit must be classic regular unisex, NOT oversized, NOT cropped, NOT baggy drop-shoulder. Sleeves are normal short sleeves with double-needle hem (not extra-long, not raw-cut). Treat this as the industry-standard Gildan 5000 Heavy Cotton blank.";
 
 const QUALITY_TAIL =
-  "Ultra realistic, premium e-commerce product photography quality, Shopify/Etsy bestseller listing image, magazine fashion photography, 85mm prime lens look, soft cinematic lighting, true-to-life fabric texture, sharp focus, color-accurate, no watermark, no logo, no extra text outside the design itself, JPEG-ready high quality.";
+  "Ultra realistic, premium e-commerce product photography quality, Shopify/Etsy bestseller listing image, magazine fashion photography, 85mm prime lens look, soft cinematic lighting, true-to-life fabric texture, sharp focus, color-accurate, no watermark, no logo, no extra text outside the design itself, JPEG-ready high quality. " +
+  "FINAL REMINDER: the printed design must be PIXEL-IDENTICAL to the supplied input image — no recoloring, no re-lettering, no re-illustration. Only the garment, the model and the scene are generated; the artwork is preserved as-is.";
 
 interface PromptCtx {
   product: string;
@@ -174,10 +193,21 @@ async function bufferFromDataUrl(dataUrl: string): Promise<Buffer> {
 }
 
 async function bufferFromUrl(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Tasarım indirilemedi: HTTP ${res.status}`);
-  const arr = await res.arrayBuffer();
-  return Buffer.from(arr);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`Tasarım indirilemedi: HTTP ${res.status}`);
+    const arr = await res.arrayBuffer();
+    return Buffer.from(arr);
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Tasarım indirilemedi (20s timeout).");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ─── ROUTE ──────────────────────────────────────────────────────────────────
@@ -245,7 +275,7 @@ export async function POST(req: Request) {
     const product = PRODUCT_MAP[productType];
     const colorEn = COLOR_MAP[color];
 
-    const prompt = spec.prompt({
+    const variantPrompt = spec.prompt({
       product: product.en,
       color: colorEn,
       weight: product.weight,
@@ -253,6 +283,9 @@ export async function POST(req: Request) {
       details: product.details,
       isTee: productType === "Tişört",
     });
+    // The preservation lock is intentionally prepended FIRST so the model
+    // reads "do not modify the artwork" as the top-priority instruction.
+    const prompt = `${DESIGN_PRESERVATION_LOCK}\n\n${variantPrompt}`;
 
     // ─── Daily $5 cap — reserve before calling OpenAI ───────────────────
     const quality = normalizeQuality(body.quality);
@@ -270,23 +303,63 @@ export async function POST(req: Request) {
       );
     }
 
-    const openai = new OpenAI({ apiKey });
-    const file = await toFile(designBuffer, "design.png", { type: "image/png" });
+    // Wider timeout + built-in retries (handles transient TLS / 5xx)
+    const openai = new OpenAI({ apiKey, timeout: 55_000, maxRetries: 0 });
 
     let b64: string | undefined;
     try {
-      const res = await openai.images.edit({
-        model: "gpt-image-1",
-        image: file,
-        prompt,
-        size: "1024x1024",
-        quality,
-      });
-      b64 = res.data?.[0]?.b64_json;
-      if (!b64) throw new Error("Mockup üretilemedi (boş yanıt).");
+      // Manual retry wrapper on top of SDK — only retries transient network
+      // problems ("Connection error", ECONNRESET, fetch failed, 5xx). Each
+      // retry waits 1.2s, 2.5s — small enough to stay under the 60s function
+      // budget. We re-build the File for each retry because the underlying
+      // ReadableStream gets consumed by the first attempt.
+      const MAX_ATTEMPTS = 3;
+      let lastErr: unknown = null;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const file = await toFile(designBuffer, "design.png", {
+          type: "image/png",
+        });
+        try {
+          const res = await openai.images.edit({
+            model: "gpt-image-1",
+            image: file,
+            prompt,
+            size: "1024x1024",
+            quality,
+          });
+          b64 = res.data?.[0]?.b64_json;
+          if (!b64) throw new Error("Mockup üretilemedi (boş yanıt).");
+          break;
+        } catch (err) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          const isTransient =
+            /connection error|connection reset|econnreset|enotfound|etimedout|eai_again|fetch failed|network|timeout|503|502|504|520|522|524/i.test(
+              msg
+            );
+          if (!isTransient || attempt === MAX_ATTEMPTS) throw err;
+          const backoff = attempt === 1 ? 1200 : 2500;
+          console.warn(
+            `[mockup] transient error on attempt ${attempt}/${MAX_ATTEMPTS}, retrying in ${backoff}ms — ${msg}`
+          );
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+      }
+      if (!b64) {
+        throw lastErr instanceof Error
+          ? lastErr
+          : new Error("Mockup üretilemedi.");
+      }
     } catch (e) {
       // Roll back the pre-charge so a failed call doesn't eat budget
       await refund("mockup", cost);
+      // Normalize the common transient error into something readable for the user
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/connection error|fetch failed|timeout/i.test(msg)) {
+        throw new Error(
+          "OpenAI bağlantı hatası — bu mockup atlandı, biraz sonra tekrar dene."
+        );
+      }
       throw e;
     }
 

@@ -315,23 +315,102 @@ export default function MockupPage() {
   ]);
 
   // ─── Load persisted state ─────────────────────────────────────────────────
+  // On mount AND every time the tab regains visibility we re-read from
+  // localStorage. This guarantees that navigating away and coming back never
+  // shows a stale `[]` for history (which previously caused the apparent
+  // "history got wiped" bug when a new generation finished while React state
+  // was still empty).
   useEffect(() => {
-    try {
-      const ai = localStorage.getItem(AI_DESIGNS_KEY);
-      if (ai) setAiDesigns(JSON.parse(ai));
-    } catch {}
-    try {
-      const h = localStorage.getItem(HISTORY_KEY);
-      if (h) setHistory(JSON.parse(h));
-    } catch {}
+    const loadAll = () => {
+      try {
+        const ai = localStorage.getItem(AI_DESIGNS_KEY);
+        if (ai) setAiDesigns(JSON.parse(ai));
+      } catch {}
+      try {
+        const h = localStorage.getItem(HISTORY_KEY);
+        setHistory(h ? (JSON.parse(h) as MockupSession[]) : []);
+      } catch {
+        setHistory([]);
+      }
+    };
+    loadAll();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadAll();
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === HISTORY_KEY || e.key === AI_DESIGNS_KEY) loadAll();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
 
-  const persistHistory = useCallback((next: MockupSession[]) => {
-    setHistory(next);
+  // Always read localStorage as the source of truth. The component's `history`
+  // state can be stale (e.g. before the mount-time useEffect runs, after page
+  // navigation, or while a long async generation is in flight) — relying on
+  // it caused old sessions to get silently overwritten.
+  const readHistoryFromStorage = useCallback((): MockupSession[] => {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      return raw ? (JSON.parse(raw) as MockupSession[]) : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const writeHistoryToStorage = useCallback((next: MockupSession[]) => {
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
     } catch {}
+    setHistory(next);
   }, []);
+
+  // High-level safe writers (use these — never call writeHistoryToStorage with
+  // a value derived from the stale `history` state directly).
+  const appendSession = useCallback(
+    (session: MockupSession) => {
+      const existing = readHistoryFromStorage();
+      const next = [session, ...existing].slice(0, HISTORY_LIMIT);
+      writeHistoryToStorage(next);
+    },
+    [readHistoryFromStorage, writeHistoryToStorage]
+  );
+
+  const mergeIntoLatestSession = useCallback(
+    (
+      newItems: MockupResult[],
+      matcher: (head: MockupSession) => boolean
+    ): boolean => {
+      const existing = readHistoryFromStorage();
+      const head = existing[0];
+      if (!head || !matcher(head)) return false;
+      const dedup = new Map<string, MockupResult>();
+      head.results.forEach((r) =>
+        dedup.set(slotKey(r.color, r.variantId), r)
+      );
+      newItems.forEach((r) => dedup.set(slotKey(r.color, r.variantId), r));
+      const merged: MockupSession = { ...head, results: Array.from(dedup.values()) };
+      writeHistoryToStorage([merged, ...existing.slice(1)]);
+      return true;
+    },
+    [readHistoryFromStorage, writeHistoryToStorage]
+  );
+
+  const deleteSessionFromStorage = useCallback(
+    (sessionId: string) => {
+      const existing = readHistoryFromStorage();
+      writeHistoryToStorage(existing.filter((s) => s.id !== sessionId));
+    },
+    [readHistoryFromStorage, writeHistoryToStorage]
+  );
+
+  const clearAllHistoryStorage = useCallback(() => {
+    writeHistoryToStorage([]);
+  }, [writeHistoryToStorage]);
 
   // ─── File upload ─────────────────────────────────────────────────────────
   const handleFiles = useCallback((files: FileList | null) => {
@@ -381,35 +460,31 @@ export default function MockupPage() {
   const totalJobs = selectedColors.length * selectedVariants.length;
 
   // ─── Generation ──────────────────────────────────────────────────────────
-  const handleGenerate = async () => {
-    if (!selectedDesign) {
-      toast.error("Önce bir tasarım seç veya yükle.");
-      return;
-    }
-    if (selectedVariants.length === 0) {
-      toast.error("En az 1 mockup türü seç.");
-      return;
-    }
-    if (selectedColors.length === 0) {
-      toast.error("En az 1 renk seç.");
-      return;
-    }
-
+  // Core runner — used by handleGenerate (fresh run) AND handleRetryFailed
+  // (only the slots that errored out). Always preserves prior `results`.
+  type Job = { color: ColorId; variantId: VariantId };
+  const runJobs = async (jobs: Job[], mode: "fresh" | "retry") => {
+    if (jobs.length === 0) return;
     setGenerating(true);
-    setResults([]);
-    setErrors({});
     limitHitRef.current = false;
 
-    // Build all (color × variant) jobs
-    type Job = { color: ColorId; variantId: VariantId };
-    const jobs: Job[] = [];
-    selectedColors.forEach((c) =>
-      selectedVariants.forEach((v) => jobs.push({ color: c, variantId: v }))
-    );
-
-    const initialProgress: Record<string, VariantStatus> = {};
-    jobs.forEach((j) => (initialProgress[slotKey(j.color, j.variantId)] = "pending"));
-    setProgress(initialProgress);
+    setProgress((prev) => {
+      const next: Record<string, VariantStatus> =
+        mode === "fresh" ? {} : { ...prev };
+      jobs.forEach((j) => (next[slotKey(j.color, j.variantId)] = "pending"));
+      return next;
+    });
+    if (mode === "fresh") {
+      setResults([]);
+      setErrors({});
+    } else {
+      // Clear errors for the jobs we are about to retry
+      setErrors((prev) => {
+        const next = { ...prev };
+        jobs.forEach((j) => delete next[slotKey(j.color, j.variantId)]);
+        return next;
+      });
+    }
 
     const collected: MockupResult[] = [];
     const collectedErrors: Record<string, string> = {};
@@ -417,6 +492,10 @@ export default function MockupPage() {
     // Run in batches of 3 to keep mostly-parallel + avoid OpenAI rate-limit
     const BATCH_SIZE = 3;
 
+    if (!selectedDesign) {
+      setGenerating(false);
+      return;
+    }
     const designPayload =
       selectedDesign.type === "store"
         ? { designUrl: selectedDesign.imageUrl }
@@ -489,46 +568,130 @@ export default function MockupPage() {
 
     setGenerating(false);
 
+    const failedCount = Object.keys(collectedErrors).length;
+
     if (collected.length === 0) {
-      toast.error("Hiçbir mockup üretilemedi.");
+      toast.error(
+        mode === "retry"
+          ? "Yeniden deneme başarısız."
+          : "Hiçbir mockup üretilemedi."
+      );
       return;
     }
 
-    // Persist session to history
-    const designThumbnail =
-      selectedDesign.type === "store"
-        ? selectedDesign.imageUrl
-        : selectedDesign.imageDataUrl;
-    const designLabel =
-      selectedDesign.type === "ai"
-        ? selectedDesign.prompt
-        : selectedDesign.type === "store"
-          ? selectedDesign.name
+    if (mode === "fresh") {
+      // Persist a new session to history — using the storage-as-truth helper
+      // so we never overwrite older sessions with a stale React state.
+      const designThumbnail =
+        selectedDesign.type === "store"
+          ? selectedDesign.imageUrl
+          : selectedDesign.imageDataUrl;
+      const designLabel =
+        selectedDesign.type === "ai"
+          ? selectedDesign.prompt
           : selectedDesign.name;
-    const session: MockupSession = {
-      id: Math.random().toString(36).slice(2, 10),
-      designLabel,
-      designThumbnail,
-      productType,
-      colors: [...selectedColors],
-      results: collected,
-      createdAt: Date.now(),
-    };
-    persistHistory([session, ...history].slice(0, HISTORY_LIMIT));
+      const session: MockupSession = {
+        id: Math.random().toString(36).slice(2, 10),
+        designLabel,
+        designThumbnail,
+        productType,
+        colors: [...selectedColors],
+        results: collected,
+        createdAt: Date.now(),
+      };
+      appendSession(session);
+    } else {
+      // Retry: merge new results into the most-recent matching history session
+      // (within a 30-minute window). Falls back to a new session if no match.
+      const merged = mergeIntoLatestSession(collected, (head) => {
+        const now = Date.now();
+        return (
+          now - head.createdAt < 30 * 60 * 1000 &&
+          head.productType === productType &&
+          head.designLabel ===
+            (selectedDesign.type === "ai"
+              ? selectedDesign.prompt
+              : selectedDesign.name)
+        );
+      });
+      if (!merged) {
+        // No mergeable head session — record retry results as their own row
+        // so they don't get lost.
+        const designThumbnail =
+          selectedDesign.type === "store"
+            ? selectedDesign.imageUrl
+            : selectedDesign.imageDataUrl;
+        const designLabel =
+          selectedDesign.type === "ai"
+            ? selectedDesign.prompt
+            : selectedDesign.name;
+        appendSession({
+          id: Math.random().toString(36).slice(2, 10),
+          designLabel,
+          designThumbnail,
+          productType,
+          colors: [...selectedColors],
+          results: collected,
+          createdAt: Date.now(),
+        });
+      }
+    }
 
-    const failedCount = Object.keys(collectedErrors).length;
     if (limitHitRef.current) {
       toast.error(
         `Günlük $5 OpenAI limiti doldu — ${collected.length} mockup tamamlandı, ${failedCount} atlandı.`,
         { duration: 8000 }
       );
-    } else if (collected.length > 0) {
+    } else {
       toast.success(
-        `${collected.length} mockup üretildi${
-          failedCount > 0 ? ` (${failedCount} başarısız)` : ""
-        }`
+        mode === "retry"
+          ? `${collected.length} mockup yeniden üretildi${
+              failedCount > 0 ? ` (${failedCount} hala başarısız)` : ""
+            }`
+          : `${collected.length} mockup üretildi${
+              failedCount > 0 ? ` (${failedCount} başarısız)` : ""
+            }`
       );
     }
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedDesign) {
+      toast.error("Önce bir tasarım seç veya yükle.");
+      return;
+    }
+    if (selectedVariants.length === 0) {
+      toast.error("En az 1 mockup türü seç.");
+      return;
+    }
+    if (selectedColors.length === 0) {
+      toast.error("En az 1 renk seç.");
+      return;
+    }
+    const jobs: Job[] = [];
+    selectedColors.forEach((c) =>
+      selectedVariants.forEach((v) => jobs.push({ color: c, variantId: v }))
+    );
+    await runJobs(jobs, "fresh");
+  };
+
+  // Failed slots → rebuild jobs from the errors map and rerun them only.
+  const failedSlots = Object.keys(errors);
+  const handleRetryFailed = async () => {
+    if (!selectedDesign) {
+      toast.error("Tasarım seçimi kayıp — yeniden başla.");
+      return;
+    }
+    if (failedSlots.length === 0) return;
+    const jobs: Job[] = failedSlots
+      .map((k) => {
+        const [color, variantId] = k.split("::") as [ColorId, VariantId];
+        return { color, variantId };
+      })
+      .filter((j) => j.color && j.variantId);
+    if (jobs.length === 0) return;
+    toast.info(`${jobs.length} başarısız mockup yeniden deneniyor…`);
+    await runJobs(jobs, "retry");
   };
 
   // ─── Download helpers ────────────────────────────────────────────────────
@@ -1001,6 +1164,8 @@ export default function MockupPage() {
               approvedDesignIds.includes(selectedDesign.id)
             }
             onApproveToDrafts={handleApproveToDrafts}
+            failedCount={failedSlots.length}
+            onRetryFailed={handleRetryFailed}
           />
         </div>
       </div>
@@ -1019,7 +1184,7 @@ export default function MockupPage() {
             <button
               onClick={() => {
                 if (confirm("Tüm mockup geçmişi silinsin mi?")) {
-                  persistHistory([]);
+                  clearAllHistoryStorage();
                   toast.success("Geçmiş temizlendi");
                 }
               }}
@@ -1045,7 +1210,7 @@ export default function MockupPage() {
                 session={sess}
                 onPreview={setModalImage}
                 onDelete={() => {
-                  persistHistory(history.filter((s) => s.id !== sess.id));
+                  deleteSessionFromStorage(sess.id);
                   toast.success("Oturum silindi");
                 }}
               />
@@ -1216,6 +1381,8 @@ function ResultGrid({
   isApproving,
   isAlreadyApproved,
   onApproveToDrafts,
+  failedCount,
+  onRetryFailed,
 }: {
   results: MockupResult[];
   progress: Record<string, "pending" | "doing" | "done" | "error">;
@@ -1230,6 +1397,8 @@ function ResultGrid({
   isApproving: boolean;
   isAlreadyApproved: boolean;
   onApproveToDrafts: () => void;
+  failedCount: number;
+  onRetryFailed: () => void;
 }) {
   const hasAny = results.length > 0;
   const resultColors = Array.from(new Set(results.map((r) => r.color)));
@@ -1274,7 +1443,22 @@ function ResultGrid({
           {hasAny ? "Üretilen Mockuplar" : "Mockuplar burada görünecek"}
         </h2>
         {hasAny && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {failedCount > 0 && (
+              <Button
+                onClick={onRetryFailed}
+                disabled={generating}
+                size="sm"
+                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white shadow-lg shadow-amber-500/20"
+              >
+                {generating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5" />
+                )}
+                Başarısızları Tekrar Dene ({failedCount})
+              </Button>
+            )}
             <Button onClick={onDownloadAll} size="sm" variant="success">
               <Archive className="h-3.5 w-3.5" />
               Hepsini ZIP İndir
