@@ -19,3 +19,16 @@ export const supabaseServer =
 export function isSupabaseConfigured(): boolean {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 }
+
+// Lazy accessor used by callers that prefer a function over a possibly-null
+// constant (e.g. etsy-auth, sync route). Throws if env is missing so callers
+// that depend on Supabase (Etsy sync, credentials, orders) fail loudly
+// instead of silently noop'ing.
+export function getSupabaseServer() {
+  if (!supabaseServer) {
+    throw new Error(
+      "Supabase env vars missing (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)."
+    );
+  }
+  return supabaseServer;
+}

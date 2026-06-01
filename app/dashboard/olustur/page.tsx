@@ -17,6 +17,8 @@ import {
   ChevronDown,
   Send,
   CheckCircle2,
+  Upload,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -203,6 +205,36 @@ export default function OlusturPage() {
   const [preset, setPreset] = useState<string>("");
   const [quality, setQuality] = useState<"low" | "medium" | "high">("medium");
 
+  // Reference image (optional inspiration / visual DNA)
+  const [referenceImage, setReferenceImage] = useState<{
+    dataUrl: string;
+    name: string;
+  } | null>(null);
+  const [referenceStrength, setReferenceStrength] = useState<
+    "subtle" | "balanced" | "strong"
+  >("balanced");
+  const [refDragOver, setRefDragOver] = useState(false);
+  const refFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleReferenceFile = useCallback(async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Sadece görsel dosyaları yükleyebilirsin.");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("Görsel 8 MB'dan büyük olamaz.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setReferenceImage({ dataUrl, name: file.name });
+      toast.success("Referans görsel hazır. AI bunu DNA olarak kullanacak.");
+    };
+    reader.onerror = () => toast.error("Görsel okunamadı.");
+    reader.readAsDataURL(file);
+  }, []);
+
   const [generating, setGenerating] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [askingIdea, setAskingIdea] = useState(false);
@@ -317,8 +349,8 @@ export default function OlusturPage() {
   };
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) {
-      toast.error("Tasarım için bir fikir yaz.");
+    if (!prompt.trim() && !referenceImage) {
+      toast.error("Tasarım için bir fikir yaz veya bir referans görsel yükle.");
       textareaRef.current?.focus();
       return;
     }
@@ -337,6 +369,8 @@ export default function OlusturPage() {
           placement: placement || undefined,
           preset: preset || undefined,
           quality,
+          referenceImageDataUrl: referenceImage?.dataUrl,
+          referenceStrength: referenceImage ? referenceStrength : undefined,
         }),
       });
       const json = await res.json();
@@ -638,6 +672,145 @@ export default function OlusturPage() {
                   </pre>
                 </div>
               </details>
+            )}
+          </div>
+
+          {/* Reference image (visual DNA) */}
+          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 backdrop-blur p-4 sm:p-5 shadow-elev-2">
+            <div className="flex items-center justify-between mb-2.5">
+              <label className="text-sm font-semibold text-slate-200 flex items-center gap-1.5">
+                <ImageIcon className="h-4 w-4 text-blue-400" />
+                Referans görsel{" "}
+                <span className="text-[10px] font-normal text-slate-500 uppercase tracking-wider ml-1">
+                  opsiyonel
+                </span>
+              </label>
+              {referenceImage && (
+                <button
+                  onClick={() => {
+                    setReferenceImage(null);
+                    if (refFileInputRef.current)
+                      refFileInputRef.current.value = "";
+                  }}
+                  className="text-[11px] text-slate-400 hover:text-rose-300 flex items-center gap-1"
+                >
+                  <X className="h-3 w-3" /> Kaldır
+                </button>
+              )}
+            </div>
+
+            <input
+              ref={refFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleReferenceFile(f);
+              }}
+            />
+
+            {!referenceImage ? (
+              <button
+                type="button"
+                onClick={() => refFileInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setRefDragOver(true);
+                }}
+                onDragLeave={() => setRefDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setRefDragOver(false);
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) handleReferenceFile(f);
+                }}
+                className={cn(
+                  "w-full rounded-xl border-2 border-dashed transition-all px-4 py-7 flex flex-col items-center justify-center gap-2 text-center",
+                  refDragOver
+                    ? "border-blue-400/60 bg-blue-500/[0.06]"
+                    : "border-slate-700/70 bg-slate-950/40 hover:border-slate-600 hover:bg-slate-900/50"
+                )}
+              >
+                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500/15 to-violet-500/10 ring-1 ring-blue-500/25 flex items-center justify-center">
+                  <Upload className="h-4 w-4 text-blue-300" />
+                </div>
+                <p className="text-[12.5px] font-semibold text-slate-200">
+                  Sürükle bırak veya tıkla
+                </p>
+                <p className="text-[10.5px] text-slate-500 leading-relaxed max-w-xs">
+                  PNG, JPG, WEBP · max 8 MB · AI bu görseli{" "}
+                  <span className="text-blue-300 font-medium">DNA</span> olarak
+                  alır (palet, tipografi, mood) — kopya değil,{" "}
+                  <span className="text-slate-300 font-medium">yeni bir akraba tasarım</span>{" "}
+                  üretir.
+                </p>
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative rounded-xl border border-slate-700/70 bg-slate-950/40 overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={referenceImage.dataUrl}
+                    alt={referenceImage.name}
+                    className="w-full max-h-56 object-contain bg-[linear-gradient(45deg,#0f172a_25%,transparent_25%),linear-gradient(-45deg,#0f172a_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#0f172a_75%),linear-gradient(-45deg,transparent_75%,#0f172a_75%)] bg-[length:14px_14px] bg-[position:0_0,0_7px,7px_-7px,-7px_0]"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent px-3 py-2">
+                    <p className="text-[11px] font-medium text-slate-300 truncate">
+                      {referenceImage.name}
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500 mb-1.5">
+                    DNA Etkisi
+                  </p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { id: "subtle" as const, label: "Hafif", hint: "Sadece palet" },
+                      {
+                        id: "balanced" as const,
+                        label: "Dengeli",
+                        hint: "Palet + mood",
+                      },
+                      {
+                        id: "strong" as const,
+                        label: "Güçlü",
+                        hint: "Tüm DNA",
+                      },
+                    ].map((r) => {
+                      const active = referenceStrength === r.id;
+                      return (
+                        <button
+                          key={r.id}
+                          onClick={() => setReferenceStrength(r.id)}
+                          className={cn(
+                            "rounded-lg border px-2 py-2 text-center transition-all",
+                            active
+                              ? "border-blue-500/40 bg-gradient-to-br from-blue-500/15 to-violet-500/10 text-white shadow-elev-1"
+                              : "border-slate-700/70 bg-slate-950/40 text-slate-300 hover:border-slate-600 hover:bg-slate-900/60"
+                          )}
+                        >
+                          <div className="text-[11.5px] font-bold leading-none">
+                            {r.label}
+                          </div>
+                          <div className="text-[9.5px] text-slate-500 mt-1">
+                            {r.hint}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-[10.5px] text-slate-500 leading-relaxed">
+                    AI referans görseli{" "}
+                    <span className="text-slate-300 font-medium">aynısı</span>{" "}
+                    olarak değil,{" "}
+                    <span className="text-blue-300 font-medium">DNA</span> olarak
+                    kullanır — palet, tipografi karakteri ve mood&apos;u alır, yepyeni
+                    bir kompozisyon üretir.
+                  </p>
+                </div>
+              </div>
             )}
           </div>
 

@@ -26,6 +26,8 @@ interface RequestBody {
   placement?: string;
   preset?: string;         // optional preset id
   quality?: "low" | "medium" | "high"; // image-gen quality, default medium
+  referenceImageDataUrl?: string; // optional inspiration image (base64 data url)
+  referenceStrength?: "subtle" | "balanced" | "strong"; // how much DNA leaks
 }
 
 // ─── STYLE ENGINE ───────────────────────────────────────────────────────────
@@ -266,6 +268,59 @@ async function enhanceConcept(
   return `Design concept based on the idea: "${userPrompt}". Hero subject prominently featured with thematic supporting elements.`;
 }
 
+// ─── STAGE 1.5: REFERENCE VISION ANALYZER ──────────────────────────────────
+// Extracts the *visual DNA* (palette / motif / typography / mood) from an
+// uploaded reference image WITHOUT describing it as a scene to replicate.
+// The downstream image gen uses this as INSPIRATION ONLY — strong negative
+// instructions ensure the new artwork is a distinctly different composition.
+async function analyzeReferenceImage(
+  openai: OpenAI,
+  imageDataUrl: string
+): Promise<string> {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      temperature: 0.5,
+      max_tokens: 280,
+      messages: [
+        {
+          role: "system",
+          content: `You analyze a reference image and extract its VISUAL DNA for a print-on-demand designer who wants to make a DIFFERENT artwork in the same family.
+
+Describe ONLY these axes (no subject narration, no scene description, no replication instructions):
+- Color palette (2–5 specific hues)
+- Linework / texture (e.g. "bold black outlines, halftone shading")
+- Typography character if any (e.g. "varsity serif", "groovy script")
+- Composition energy (e.g. "centered emblem", "asymmetric drop", "edge-to-edge tile")
+- Mood / era / aesthetic (e.g. "1970s NCAA vintage", "Y2K chrome", "old-school tattoo flash")
+- Distinct motif vocabulary (e.g. "shield, banner ribbon, panther, rose")
+
+OUTPUT JSON (no markdown):
+{ "dna": "one rich paragraph 30–60 words covering the axes above, no copy/replicate language" }`,
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extract this reference image's visual DNA. The user wants INSPIRATION — output must NOT instruct replication.",
+            },
+            { type: "image_url", image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content || "";
+    const parsed: { dna?: string } = JSON.parse(raw);
+    const dna = (parsed.dna || "").trim();
+    if (dna) return dna;
+  } catch (err) {
+    console.error("[analyzeReferenceImage] failed", err);
+  }
+  return "";
+}
+
 // ─── STAGE 2: POD PROMPT ENGINE (deterministic) ─────────────────────────────
 function buildPodPrompt({
   concept,
@@ -274,6 +329,8 @@ function buildPodPrompt({
   type,
   placement,
   preset,
+  referenceDNA,
+  referenceStrength,
 }: {
   concept: string;
   styles?: string[];
@@ -281,6 +338,8 @@ function buildPodPrompt({
   type?: string;
   placement?: string;
   preset?: string;
+  referenceDNA?: string;
+  referenceStrength?: "subtle" | "balanced" | "strong";
 }): string {
   const segments: string[] = [];
 
@@ -325,6 +384,24 @@ function buildPodPrompt({
   // Preset extras
   if (preset && PRESETS[preset]?.extra) {
     segments.push(PRESETS[preset]!.extra + ".");
+  }
+
+  // ─── REFERENCE DNA INJECTION ────────────────────────────────────────────
+  // The reference image is used ONLY as visual DNA — palette/typography/mood/
+  // motif vocabulary — never as a composition to replicate. Strong negative
+  // language enforces a distinctly different layout.
+  if (referenceDNA && referenceDNA.length > 0) {
+    const strength = referenceStrength || "balanced";
+    const intensity =
+      strength === "subtle"
+        ? "Borrow ONLY the palette and mood — composition must be completely original."
+        : strength === "strong"
+          ? "Adopt the palette, typography character, texture, and motif vocabulary closely — but the subject and composition must be NEW."
+          : "Echo the palette, typography character, and motif vocabulary — produce a sibling design with a distinctly different composition.";
+
+    segments.push(
+      `Visual DNA inspiration (for stylistic guidance only — DO NOT replicate, copy, or trace the reference; create a clearly DIFFERENT artwork that feels like a cousin of it): ${referenceDNA} ${intensity} The final artwork must be visibly NEW: different subject framing, different focal arrangement, different specific motifs, and no element should be a direct copy of the reference.`
+    );
   }
 
   // Print-ready + anti-instructions
@@ -432,15 +509,29 @@ export async function POST(req: Request) {
       if (!placement) placement = p.placement;
     }
 
+    // Both enhance & generate may use a reference image; analyze once.
+    const referenceImageDataUrl = (body.referenceImageDataUrl || "").trim();
+    const hasReference =
+      referenceImageDataUrl.startsWith("data:image/") ||
+      referenceImageDataUrl.startsWith("http");
+    const referenceStrength = body.referenceStrength;
+    let referenceDNA = "";
+    if (hasReference) {
+      referenceDNA = await analyzeReferenceImage(openai, referenceImageDataUrl);
+    }
+
     if (action === "enhance") {
       const userPrompt = (body.prompt || "").trim();
-      if (!userPrompt) {
+      if (!userPrompt && !hasReference) {
         return NextResponse.json(
           { ok: false, error: "Prompt boş olamaz." },
           { status: 400 }
         );
       }
-      const concept = await enhanceConcept(openai, userPrompt);
+      const concept = await enhanceConcept(
+        openai,
+        userPrompt || "Reference-driven original design"
+      );
       const englishPrompt = buildPodPrompt({
         concept,
         styles,
@@ -448,24 +539,30 @@ export async function POST(req: Request) {
         type,
         placement,
         preset,
+        referenceDNA,
+        referenceStrength,
       });
       return NextResponse.json({
         ok: true,
         concept,
         englishPrompt,
+        referenceDNA: referenceDNA || undefined,
       });
     }
 
     // action === "generate"
     const userPrompt = (body.prompt || "").trim();
-    if (!userPrompt) {
+    if (!userPrompt && !hasReference) {
       return NextResponse.json(
-        { ok: false, error: "Tasarım için bir fikir yaz." },
+        { ok: false, error: "Tasarım için bir fikir yaz veya referans görsel yükle." },
         { status: 400 }
       );
     }
 
-    const concept = await enhanceConcept(openai, userPrompt);
+    const concept = await enhanceConcept(
+      openai,
+      userPrompt || "Original print-ready artwork inspired by the provided reference DNA"
+    );
     const englishPrompt = buildPodPrompt({
       concept,
       styles,
@@ -473,6 +570,8 @@ export async function POST(req: Request) {
       type,
       placement,
       preset,
+      referenceDNA,
+      referenceStrength,
     });
 
     // ─── Daily $5 cap — reserve before calling OpenAI image gen ────────
@@ -507,6 +606,7 @@ export async function POST(req: Request) {
       quality,
       cost,
       usage: reservation.snapshot,
+      referenceDNA: referenceDNA || undefined,
     });
   } catch (err) {
     const message =
