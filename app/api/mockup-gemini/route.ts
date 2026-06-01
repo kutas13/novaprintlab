@@ -26,7 +26,17 @@ export const dynamic = "force-dynamic";
 // Token: https://aistudio.google.com/apikey (env: GEMINI_API_KEY)
 // ────────────────────────────────────────────────────────────────────────────
 
-const GEMINI_MODEL = "gemini-2.5-flash-image-preview";
+// Google rotates the "image-capable" Gemini model name frequently. We try
+// each candidate in order and use the first one that doesn't return a
+// 404/NOT_FOUND. The list is ordered newest → oldest. If Google promotes a
+// new image model, add it to the top of this list.
+const GEMINI_MODEL_CANDIDATES = [
+  "gemini-2.5-flash-image",
+  "gemini-2.5-flash-image-preview",
+  "gemini-2.0-flash-exp-image-generation",
+  "gemini-2.0-flash-preview-image-generation",
+  "imagen-3.0-generate-002",
+];
 const GEMINI_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -96,45 +106,74 @@ export async function POST(req: Request) {
     const prompt = buildMockupPrompt(variantId, ctx, true);
     const spec = VARIANTS[variantId];
 
-    const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: "image/png",
-                  data: designBase64,
-                },
+    const requestBody = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: "image/png",
+                data: designBase64,
               },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseModalities: ["IMAGE"],
+            },
+          ],
         },
-      }),
-    });
+      ],
+      generationConfig: {
+        responseModalities: ["IMAGE"],
+      },
+    };
 
-    const json = (await res.json()) as GeminiResponse;
+    // Try each candidate model in order. NOT_FOUND / 404 means the model
+    // name was renamed by Google; any other failure (auth, quota, safety)
+    // we surface immediately because it won't get better by switching model.
+    let res: Response | null = null;
+    let json: GeminiResponse | null = null;
+    let triedModel = "";
+    const triedErrors: string[] = [];
+    for (const model of GEMINI_MODEL_CANDIDATES) {
+      triedModel = model;
+      const url = `${GEMINI_BASE}/${model}:generateContent?key=${encodeURIComponent(
+        apiKey
+      )}`;
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      json = (await res.json().catch(() => null)) as GeminiResponse | null;
 
-    if (!res.ok) {
+      if (res.ok) break;
+
+      const errStatus = json?.error?.status || "";
+      const errMsg = json?.error?.message || `HTTP ${res.status}`;
+      triedErrors.push(`${model}: ${errMsg}`);
+
+      // 404 / NOT_FOUND → try next candidate. Anything else (401, 403, 429,
+      // INVALID_ARGUMENT) is final.
+      const isModelNotFound =
+        res.status === 404 ||
+        errStatus === "NOT_FOUND" ||
+        /not found|not supported|unsupported model/i.test(errMsg);
+      if (!isModelNotFound) break;
+    }
+
+    if (!res || !res.ok || !json) {
       const errMsg =
-        json.error?.message ||
-        `Gemini HTTP ${res.status}${
-          json.error?.status ? ` (${json.error.status})` : ""
-        }`;
+        json?.error?.message ||
+        `Gemini denenen modellerin hepsi başarısız: ${triedErrors.join(
+          " | "
+        )}`;
       return NextResponse.json(
-        { ok: false, error: errMsg },
-        { status: res.status >= 400 ? res.status : 502 }
+        {
+          ok: false,
+          error: errMsg,
+          triedModels: triedErrors,
+          lastModelTried: triedModel,
+        },
+        { status: res && res.status >= 400 ? res.status : 502 }
       );
     }
 

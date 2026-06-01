@@ -617,11 +617,19 @@ export default function MockupPage() {
     const failedCount = Object.keys(collectedErrors).length;
 
     if (collected.length === 0) {
-      toast.error(
+      // Surface the actual upstream error from the first failed job — the
+      // generic "Hiçbir mockup üretilemedi" string hides the real reason
+      // (missing API key, model not found, quota exhausted etc.). We grab
+      // the first errored slot and bubble its message into the toast.
+      const firstError = Object.values(collectedErrors)[0] || "";
+      const headline =
         mode === "retry"
           ? "Yeniden deneme başarısız."
-          : "Hiçbir mockup üretilemedi."
-      );
+          : "Hiçbir mockup üretilemedi.";
+      const detail = firstError
+        ? `\n\nHata: ${firstError.slice(0, 220)}`
+        : "";
+      toast.error(headline + detail, { duration: 12000 });
       return;
     }
 

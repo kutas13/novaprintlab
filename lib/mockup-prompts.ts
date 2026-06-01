@@ -65,27 +65,77 @@ export const COLOR_MAP: Record<ProductColor, string> = {
 };
 
 export const DESIGN_PRESERVATION_LOCK =
-  "ABSOLUTE TOP PRIORITY — DESIGN ASSET PRESERVATION RULE (read this BEFORE anything else): The supplied input image is a FINISHED, FINALIZED print design. You MUST treat that artwork as a SEALED, IMMUTABLE asset — like a printed sticker that is already on the shirt. " +
-  "DO NOT redraw the design. " +
-  "DO NOT change any letter, word, text, typography, font, character, language, or word order. " +
-  "DO NOT translate or substitute any text. " +
-  "DO NOT change the colors of the design (ink colors, palette, hue, saturation, contrast). " +
-  "DO NOT change the shapes, illustrations, icons, logos, characters, or composition of the design. " +
-  "DO NOT add new text, captions, taglines, signatures, watermarks, or extra graphics into the design. " +
-  "DO NOT crop, mirror, rotate, stretch, or rearrange the design. " +
-  "DO NOT 'improve', 'clean up', or 'reinterpret' the design — its current state is final. " +
-  "Your ONLY job regarding the design is to project it AS-IS onto the garment fabric and add ONLY natural fabric folds, lighting and shadow OVER it (as if it were a real high-quality screen print already on the shirt). " +
-  "Pixel-for-pixel, the design content must remain identical to the supplied image.";
+  "═══════════════════════════════════════════════════════════════════════\n" +
+  "ABSOLUTE TOP PRIORITY — DESIGN ASSET PRESERVATION RULE — READ FIRST\n" +
+  "═══════════════════════════════════════════════════════════════════════\n" +
+  "The supplied input image is the GROUND TRUTH ARTWORK. It is the final, " +
+  "completed, customer-approved print design for this garment. Your job is " +
+  "to PHOTOGRAPH a t-shirt that ALREADY has this exact artwork screen-printed " +
+  "on its chest. You are NOT designing — you are STAGING and PHOTOGRAPHING " +
+  "a garment that already has the print on it.\n" +
+  "\n" +
+  "CRITICAL DESIGN RULES:\n" +
+  "1. The artwork must appear in the output IDENTICAL to the input — pixel for pixel.\n" +
+  "2. Every letter, word, character, glyph, accent mark and number must match EXACTLY. " +
+  "If the input says 'LONDON 2026' the output MUST say 'LONDON 2026' — not 'London 2026', " +
+  "not 'LONDON 2025', not translated to any other language.\n" +
+  "3. Every color, hue, gradient, ink shade and tonal value in the artwork must match EXACTLY.\n" +
+  "4. Every illustration, icon, character, shape, line and stroke must match EXACTLY. " +
+  "Do not redraw faces, do not redraw eyes, do not redraw hair, do not redraw any element.\n" +
+  "5. The composition, layout, spacing, alignment and proportions of all design elements " +
+  "must match the input EXACTLY.\n" +
+  "6. Do NOT add: new text, taglines, captions, signatures, watermarks, brand names, " +
+  "borders, frames, badges, or any extra graphics into or near the design.\n" +
+  "7. Do NOT remove or omit any element that is in the original design.\n" +
+  "8. Do NOT 'clean up', 'improve', 'vectorize', 'simplify', or 'stylize' the design — " +
+  "treat its current state as PERFECT and FINAL.\n" +
+  "\n" +
+  "MENTAL MODEL: Imagine the input image is a high-resolution photograph of an " +
+  "existing sticker that is already stuck on the shirt. Your only freedom is " +
+  "(a) how the shirt is folded/worn/posed, and (b) the lighting, fabric folds " +
+  "and natural shadows that sit OVER the print. The print itself never changes.\n" +
+  "═══════════════════════════════════════════════════════════════════════";
 
 export const PRINT_PLACEMENT_HINT =
-  "Project the supplied design (exact pixels, unchanged) centered on the chest of the garment as if it is already an existing screen print on the fabric. The print should sit naturally over the fabric — gently following the fabric folds, wrinkles, lighting and shadows for realism — but the design content, letters, fonts, colors and shapes MUST remain identical to the supplied input image. Do not redraw, retype, retranslate, or recolor any part of the design.";
+  "PRINT PLACEMENT: Project the supplied design (exact pixels, unchanged) centered " +
+  "on the chest of the garment as if it is an EXISTING high-quality screen print " +
+  "already physically present on the fabric. The print should follow natural fabric " +
+  "folds, wrinkles, lighting and shadows for realism — but the artwork content (every " +
+  "letter, font, color, shape, illustration) MUST remain pixel-identical to the input. " +
+  "Do not redraw, retype, retranslate, or recolor any part of the design under any " +
+  "circumstance. If you cannot preserve a detail, leave it untouched rather than " +
+  "guessing or recreating it.";
 
 export const TEE_NEGATIVE_LOCK =
   "STRICT garment rules: the collar must be a SLIM and NORMAL THICKNESS ribbed crewneck (about 1.5cm) — absolutely NOT a thick collar, NOT a mock neck, NOT a turtleneck, NOT a rolled neck, NOT a chunky band. The fit must be classic regular unisex, NOT oversized, NOT cropped, NOT baggy drop-shoulder. Sleeves are normal short sleeves with double-needle hem (not extra-long, not raw-cut). Treat this as the industry-standard Gildan 5000 Heavy Cotton blank.";
 
+// Camera framing rule — applied to every variant that includes a human
+// model. Stops the AI from cropping the head/feet off and from generating
+// bald/headless models. We give it concrete framing percentages plus an
+// explicit "complete head with full hair visible" requirement.
+export const FRAMING_LOCK =
+  "CAMERA & FRAMING RULES (mandatory): The shot is a clean studio fashion " +
+  "photograph framed in a 1:1 square aspect ratio. The model's ENTIRE BODY " +
+  "must fit fully inside the frame from the top of the head down to the feet, " +
+  "with comfortable safe-area margin on every side (at least 6% empty space " +
+  "above the highest hair strand, at least 6% below the shoes). " +
+  "THE MODEL'S COMPLETE HEAD IS VISIBLE: full natural hairstyle (a normal " +
+  "amount of hair — not bald, not cropped, not cut off by the frame), full " +
+  "forehead, full face, full neck, full ears. Do NOT crop the head, do NOT " +
+  "crop the feet, do NOT zoom in tight on the chest. The composition must " +
+  "look like a professional full-length fashion catalog shot where the entire " +
+  "model is in frame and the printed chest design is the clear focal point. " +
+  "Eye level horizontal camera angle, no extreme low or high angles.";
+
 export const QUALITY_TAIL =
   "Ultra realistic, premium e-commerce product photography quality, Shopify/Etsy bestseller listing image, magazine fashion photography, 85mm prime lens look, soft cinematic lighting, true-to-life fabric texture, sharp focus, color-accurate, no watermark, no logo, no extra text outside the design itself, JPEG-ready high quality. " +
-  "FINAL REMINDER: the printed design must be PIXEL-IDENTICAL to the supplied input image — no recoloring, no re-lettering, no re-illustration. Only the garment, the model and the scene are generated; the artwork is preserved as-is.";
+  "═══ FINAL REMINDER — DESIGN PRESERVATION ═══ " +
+  "The printed design on the chest MUST be pixel-identical to the supplied input image. " +
+  "Every letter must match, every color must match, every illustration must match. " +
+  "You are PHOTOGRAPHING an existing print, you are NOT designing or redrawing it. " +
+  "If anything in the output design differs from the input by even one letter or one color, " +
+  "the result is WRONG and must be regenerated. Only the garment, the model and the scene " +
+  "are generated; the artwork is preserved as-is.";
 
 export interface PromptCtx {
   product: string;
@@ -106,6 +156,11 @@ function constructionBlock(ctx: PromptCtx): string {
   return `${ctx.details}${ctx.isTee ? " " + TEE_NEGATIVE_LOCK : ""}`;
 }
 
+// Appended to every human-model variant. Centralised here so a single edit
+// changes every pose. Folded/flat-minimal variants skip this because they
+// don't include a person.
+const HUMAN_BLOCK = ` ${FRAMING_LOCK}`;
+
 export const VARIANTS: Record<VariantId, VariantSpec> = {
   folded: {
     id: "folded",
@@ -117,37 +172,37 @@ export const VARIANTS: Record<VariantId, VariantSpec> = {
     id: "man-standing-1",
     label: "Erkek — Ayakta Poz 1",
     prompt: (ctx) =>
-      `Full-body fashion photograph of a 25 year old male model wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, paired with simple straight-leg dark jeans and white sneakers. ${ctx.weight}. He stands naturally facing the camera with arms relaxed at his sides, slight three-quarter angle. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Neutral seamless light-gray studio backdrop, professional softbox lighting, modern minimalist styling. ${QUALITY_TAIL}`,
+      `Full-body fashion photograph of a 25 year old male model with a normal short modern hairstyle (full natural hair clearly visible on top of the head — NOT bald, NOT cropped, NOT shaved), wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, paired with simple straight-leg dark jeans and white sneakers. ${ctx.weight}. He stands naturally facing the camera with arms relaxed at his sides, slight three-quarter angle. The frame includes his entire body from the very top of his hair down to below his shoes, with safe-area margin on all sides. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Neutral seamless light-gray studio backdrop, professional softbox lighting, modern minimalist styling.${HUMAN_BLOCK} ${QUALITY_TAIL}`,
   },
   "man-standing-2": {
     id: "man-standing-2",
     label: "Erkek — Ayakta Poz 2",
     prompt: (ctx) =>
-      `Editorial full-body photo of a 25 year old male model wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, hands casually tucked into his pants pockets. ${ctx.weight}. Side-profile shoulder turned slightly toward the camera, looking off-frame. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Warm minimalist concrete-wall background, golden hour window light, candid lookbook vibe. ${QUALITY_TAIL}`,
+      `Editorial full-body photo of a 25 year old male model with a normal modern medium-short hairstyle (complete natural hair fully visible on the top of his head — NOT bald, NOT shaved, NOT cropped off by the frame), wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, hands casually tucked into his pants pockets. ${ctx.weight}. Side-profile shoulder turned slightly toward the camera, looking off-frame. The frame includes his entire body from the very top of his hair down to below his shoes, with safe-area margin on all sides. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Warm minimalist concrete-wall background, golden hour window light, candid lookbook vibe.${HUMAN_BLOCK} ${QUALITY_TAIL}`,
   },
   "man-sitting": {
     id: "man-sitting",
     label: "Erkek — Oturmuş",
     prompt: (ctx) =>
-      `Full-body lifestyle photograph of a 25 year old male model wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, sitting on a low minimalist concrete bench with one elbow resting on his knee. ${ctx.weight}. Front facing the camera, relaxed natural pose. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Clean neutral cream studio background, soft directional window light, modern lookbook aesthetic. ${QUALITY_TAIL}`,
+      `Full-body lifestyle photograph of a 25 year old male model with a normal modern short hairstyle (full natural hair clearly visible on top of his head — NOT bald, NOT cropped), wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, sitting on a low minimalist concrete bench with one elbow resting on his knee. ${ctx.weight}. Front facing the camera, relaxed natural pose. The frame includes his entire seated body from the top of his hair down to his shoes with comfortable margin around. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Clean neutral cream studio background, soft directional window light, modern lookbook aesthetic.${HUMAN_BLOCK} ${QUALITY_TAIL}`,
   },
   "woman-standing-1": {
     id: "woman-standing-1",
     label: "Kadın — Ayakta Poz 1",
     prompt: (ctx) =>
-      `Full-body fashion photograph of a 24 year old female model wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, paired with simple high-waist straight jeans and white sneakers. ${ctx.weight}. She stands facing the camera with one hand gently touching her hip, relaxed natural posture. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Neutral seamless light-gray studio backdrop, soft cinematic studio lighting, modern minimalist styling. ${QUALITY_TAIL}`,
+      `Full-body fashion photograph of a 24 year old female model with natural shoulder-length brown hair (FULL HAIR clearly visible at the top of her head — NOT cropped by the frame, NOT hidden), wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, paired with simple high-waist straight jeans and white sneakers. ${ctx.weight}. She stands facing the camera with one hand gently touching her hip, relaxed natural posture. The frame includes her entire body from the very top of her hair down to below her shoes, with safe-area margin on all sides. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Neutral seamless light-gray studio backdrop, soft cinematic studio lighting, modern minimalist styling.${HUMAN_BLOCK} ${QUALITY_TAIL}`,
   },
   "woman-standing-2": {
     id: "woman-standing-2",
     label: "Kadın — Ayakta Poz 2",
     prompt: (ctx) =>
-      `Editorial full-body photo of a 24 year old female model wearing a ${ctx.color} ${ctx.cut} ${ctx.product}. ${ctx.weight}. Three-quarter angle pose, looking slightly down with a soft natural expression, hands tucked into the front of the garment. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Warm beige studio backdrop, soft directional golden window light, magazine fashion editorial vibe. ${QUALITY_TAIL}`,
+      `Editorial full-body photo of a 24 year old female model with natural medium-length hair (FULL HAIR clearly visible at the top of her head — NOT cropped, NOT cut off by the frame), wearing a ${ctx.color} ${ctx.cut} ${ctx.product}. ${ctx.weight}. Three-quarter angle pose, looking slightly down with a soft natural expression, hands tucked into the front of the garment. The frame includes her entire body from the very top of her hair down to below her shoes, with safe-area margin on all sides. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Warm beige studio backdrop, soft directional golden window light, magazine fashion editorial vibe.${HUMAN_BLOCK} ${QUALITY_TAIL}`,
   },
   "woman-crosslegged": {
     id: "woman-crosslegged",
     label: "Kadın — Bağdaş Kurmuş",
     prompt: (ctx) =>
-      `Full-body lifestyle photograph of a 24 year old female model wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, sitting cross-legged on a clean studio floor, hands resting gently on her knees. ${ctx.weight}. Facing the camera with a calm relaxed expression. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Soft cream seamless studio background, even soft top light, modern cozy lifestyle look. ${QUALITY_TAIL}`,
+      `Full-body lifestyle photograph of a 24 year old female model with natural shoulder-length hair (FULL HAIR clearly visible at the top of her head — NOT cropped by the frame), wearing a ${ctx.color} ${ctx.cut} ${ctx.product}, sitting cross-legged on a clean studio floor, hands resting gently on her knees. ${ctx.weight}. Facing the camera with a calm relaxed expression. The frame includes her entire seated body from the top of her hair down to her ankles with comfortable margin around. ${PRINT_PLACEMENT_HINT} ${constructionBlock(ctx)} Soft cream seamless studio background, even soft top light, modern cozy lifestyle look.${HUMAN_BLOCK} ${QUALITY_TAIL}`,
   },
   "flat-minimal": {
     id: "flat-minimal",
