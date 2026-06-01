@@ -14,18 +14,24 @@ import {
 } from "@/lib/printful-products";
 
 export const runtime = "nodejs";
-export const maxDuration = 90;
+// Vercel Hobby plan caps at 60s. Pro lets us go to 300s but we should plan
+// for the cheapest tier. Printful renders a batch (≤7 variants in one task)
+// in ~10-25 seconds total so 60s is plenty.
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 // ────────────────────────────────────────────────────────────────────────────
 // PRINTFUL MOCKUP ENDPOINT
-// Body: { productType, colors[], designUrl, mockupStyleIds? }
-// Notes:
-//   - designUrl MUST be a public https URL (Printful worker fetches it).
-//   - For "store" designs from Supabase the public bucket URL works directly.
-//   - For AI/upload designs (base64), upload to Supabase first OR use
-//     /api/printful-upload (server uploads then returns public URL).
-//   - One Printful task can render N variants at once; we batch by color.
+// Body: { productType, colors[], designUrl, mockupStyleIds?, widthPx? }
+//
+// Pipeline:
+//   1. Pull catalog variants once for the product.
+//   2. Resolve each requested UI color → real variant_id (alias matching).
+//   3. Submit ONE mockup task with all resolved variant_ids → single
+//      Printful render job → results returned together (much cheaper on
+//      function time than one task per color).
+//   4. Poll until completed, map per-variant mockups into a flat list, and
+//      group them back by UI color for the frontend.
 // ────────────────────────────────────────────────────────────────────────────
 
 interface RequestBody {
@@ -40,7 +46,7 @@ interface RenderedMockup {
   color: ColorId;
   variantId: number;
   printfulColor: string;
-  placement: string; // "front" | etc.
+  placement: string;
   styleId?: number;
   imageUrl: string;
 }
@@ -109,65 +115,118 @@ export async function POST(req: Request) {
     }
 
     if (resolved.length === 0) {
+      // Pull a sample of available colors to help the user figure out the
+      // mismatch and update their selection (e.g. "Mocha" isn't a real BC
+      // 3001 color, "Heather Dust" is).
+      const sampleColors = Array.from(
+        new Set(variants.map((v) => v.color).filter(Boolean))
+      ).slice(0, 16);
       return NextResponse.json(
         {
           ok: false,
-          error: `Hiçbir renk Printful kataloğunda eşleşmedi: ${unresolved.join(
+          error: `Renkler Printful kataloğunda eşleşmedi: ${unresolved.join(
             ", "
-          )}`,
+          )}. Mevcut renk örnekleri: ${sampleColors.join(", ")}`,
+          unresolved,
+          availableColorsSample: sampleColors,
         },
         { status: 422 }
       );
     }
 
-    // 2) One task per color so we can attribute mockups back to colors cleanly.
-    //    Printful renders fast (~5-15s/task); 7 colors finish well under 90s.
+    // 2) Single batched task — all variants rendered in one Printful job.
+    const variantIdToColor = new Map<number, ColorId>();
+    const variantIdToPrintfulColor = new Map<number, string>();
+    for (const r of resolved) {
+      variantIdToColor.set(r.variantId, r.color);
+      variantIdToPrintfulColor.set(r.variantId, r.printfulColor);
+    }
+
+    let taskId: number;
+    try {
+      taskId = await createMockupTask({
+        catalogProductId: productDef.catalogProductId,
+        catalogVariantIds: resolved.map((r) => r.variantId),
+        designUrl,
+        mockupStyleIds: body.mockupStyleIds,
+        widthPx: body.widthPx ?? 1000,
+        format: "jpg",
+      });
+    } catch (err) {
+      if (err instanceof PrintfulError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `Printful task açılamadı: ${err.message}`,
+            status: err.status,
+            body: err.body,
+            debug: {
+              productId: productDef.catalogProductId,
+              variantIds: resolved.map((r) => r.variantId),
+            },
+          },
+          { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+        );
+      }
+      throw err;
+    }
+
+    let result: Awaited<ReturnType<typeof waitForMockupTask>>;
+    try {
+      result = await waitForMockupTask(taskId, { totalTimeoutMs: 50_000 });
+    } catch (err) {
+      if (err instanceof PrintfulError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: err.message,
+            status: err.status,
+            taskId,
+            body: err.body,
+          },
+          { status: err.status >= 400 && err.status < 600 ? err.status : 502 }
+        );
+      }
+      throw err;
+    }
+
     const rendered: RenderedMockup[] = [];
-    const errors: Record<string, string> = {};
+    const groups = result.catalog_variant_mockups || [];
 
-    for (const slot of resolved) {
-      try {
-        const taskId = await createMockupTask({
-          catalogProductId: productDef.catalogProductId,
-          catalogVariantIds: [slot.variantId],
-          designUrl,
-          mockupStyleIds: body.mockupStyleIds,
-          widthPx: body.widthPx ?? 1000,
-          format: "jpg",
+    for (const g of groups) {
+      const color = variantIdToColor.get(g.catalog_variant_id);
+      const printfulColor =
+        variantIdToPrintfulColor.get(g.catalog_variant_id) || "";
+      if (!color) continue;
+      for (const m of g.mockups || []) {
+        if (!m.mockup_url) continue;
+        rendered.push({
+          color,
+          variantId: g.catalog_variant_id,
+          printfulColor,
+          placement: m.placement || "front",
+          styleId: m.style_id,
+          imageUrl: m.mockup_url,
         });
-        const result = await waitForMockupTask(taskId);
-        const groups = result.catalog_variant_mockups || [];
-        const flatMockups = result.mockups || [];
+      }
+    }
 
-        const collect = (mockup: {
-          placement: string;
-          mockup_url: string;
-          style_id?: number;
-        }) =>
-          rendered.push({
-            color: slot.color,
-            variantId: slot.variantId,
-            printfulColor: slot.printfulColor,
-            placement: mockup.placement,
-            styleId: mockup.style_id,
-            imageUrl: mockup.mockup_url,
-          });
-
-        if (groups.length > 0) {
-          for (const g of groups) {
-            for (const m of g.mockups || []) {
-              if (m.mockup_url) collect(m);
-            }
-          }
-        } else if (flatMockups.length > 0) {
-          for (const m of flatMockups) {
-            if (m.mockup_url) collect(m);
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Hata";
-        errors[slot.color] = msg;
-        console.error(`[mockup-printful] ${slot.color} failed:`, err);
+    // v2 sometimes returns a flat top-level `mockups` array too
+    if (rendered.length === 0 && Array.isArray(result.mockups)) {
+      for (const m of result.mockups) {
+        const v = m.variant_ids?.[0];
+        if (typeof v !== "number") continue;
+        const color = variantIdToColor.get(v);
+        const printfulColor = variantIdToPrintfulColor.get(v) || "";
+        if (!color || !m.mockup_url) continue;
+        rendered.push({
+          color,
+          variantId: v,
+          printfulColor,
+          placement: m.placement || "front",
+          styleId: m.style_id,
+          imageUrl: m.mockup_url,
+        });
       }
     }
 
@@ -175,8 +234,14 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Hiçbir Printful mockup üretilemedi.",
-          errors,
+          error:
+            "Printful task tamamlandı ama hiçbir mockup_url dönmedi. Bu genellikle tasarım URL'inin Printful tarafından indirilemediği anlamına gelir (Supabase bucket'ın 'design-images' public olmalı veya signed URL kullanılmalı).",
+          taskId,
+          debug: {
+            productId: productDef.catalogProductId,
+            resolvedColors: resolved,
+            failureReasons: result.failure_reasons || [],
+          },
         },
         { status: 502 }
       );
@@ -188,7 +253,6 @@ export async function POST(req: Request) {
       brandModel: productDef.brandModel,
       details: productDef.details,
       mockups: rendered,
-      errors,
       unresolved,
     });
   } catch (err) {

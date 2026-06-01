@@ -740,7 +740,27 @@ export default function MockupPage() {
   //      approve-to-drafts pipeline.
   const ensurePublicUrl = useCallback(async (): Promise<string | null> => {
     if (!selectedDesign) return null;
-    if (selectedDesign.type === "store") return selectedDesign.imageUrl;
+
+    // STORE designs: imageUrl is already a Supabase public URL — but if the
+    // bucket is private OR the public flag was toggled off, Printful won't be
+    // able to fetch it. Round-trip through /api/printful-design-url which
+    // converts public URLs into 24h signed URLs that work regardless of
+    // bucket visibility.
+    if (selectedDesign.type === "store") {
+      try {
+        const res = await fetch("/api/printful-design-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ designUrl: selectedDesign.imageUrl }),
+        });
+        const json = await res.json();
+        if (res.ok && json.ok && json.url) return json.url as string;
+      } catch {
+        // fall back to raw URL
+      }
+      return selectedDesign.imageUrl;
+    }
+
     // AI / upload designs are base64 — upload to Supabase via our helper
     // endpoint so Printful's worker can fetch the file over HTTPS.
     const filename =
@@ -807,6 +827,10 @@ export default function MockupPage() {
         }),
       });
       const json = await res.json();
+      // Always log the full payload so the browser console has the per-color
+      // error map (json.errors) and resolved variant IDs (json.debug) — these
+      // are the bits we need to diagnose a "hiçbir mockup üretilemedi" run.
+      console.log("[printful] response", res.status, json);
       if (!res.ok || !json.ok) {
         throw new Error(json.error || "Printful API hatası.");
       }
@@ -899,7 +923,11 @@ export default function MockupPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Hata";
       console.error("[printful] generation failed:", err);
-      toast.error(`Printful: ${msg}`, { id: toastId, duration: 8000 });
+      // The error message from the API already includes diagnostic detail
+      // (per-color reasons, available colors sample, etc.). Show the long
+      // form so the user sees actionable info, but cap so the toast fits.
+      const compact = msg.length > 280 ? msg.slice(0, 277) + "…" : msg;
+      toast.error(compact, { id: toastId, duration: 12000 });
       // Reset progress on failure
       setProgress((prev) => {
         const next: Record<string, VariantStatus> = { ...prev };

@@ -66,14 +66,42 @@ export type ColorId =
   | "Yeşil"
   | "Bej";
 
+// Aliases are ordered from "most preferred" → "fallback". The resolver tries
+// each alias in turn, first as an exact size-M match, then case-insensitive
+// contains, then any-size exact. Bella+Canvas 3001 has ~80 colors; Gildan
+// hoodie/sweat have ~25. We list a wide pool so any one of the products has
+// at least one viable match.
 export const COLOR_ALIASES: Record<ColorId, string[]> = {
-  Siyah: ["Black"],
-  Beyaz: ["White"],
-  Gri: ["Athletic Heather", "Sport Grey", "Heather Gray", "Heather"],
-  Lacivert: ["Navy"],
-  "Kırmızı": ["Red", "Cardinal Red", "Cardinal"],
-  "Yeşil": ["Forest Green", "Forest", "Military Green", "Olive"],
-  Bej: ["Sand", "Soft Cream", "Natural", "Heather Dust"],
+  Siyah: ["Black", "True Black", "Black Heather"],
+  Beyaz: ["White", "Vintage White", "Off White"],
+  Gri: [
+    "Athletic Heather",
+    "Sport Grey",
+    "Heather Gray",
+    "Heather Grey",
+    "Heather",
+    "Solid Athletic Heather",
+    "Dark Heather Grey",
+    "Charcoal",
+  ],
+  Lacivert: ["Navy", "True Navy", "Heather Navy", "Solid Navy"],
+  "Kırmızı": ["Red", "True Red", "Cardinal Red", "Cardinal", "Heather Red"],
+  "Yeşil": [
+    "Forest",
+    "Forest Green",
+    "Heather Forest",
+    "Olive",
+    "Military Green",
+    "Army",
+  ],
+  Bej: [
+    "Sand",
+    "Soft Cream",
+    "Natural",
+    "Heather Dust",
+    "Tan",
+    "Vintage Sand",
+  ],
 };
 
 /** Default size we render the mockup at — variants always have an M usually. */

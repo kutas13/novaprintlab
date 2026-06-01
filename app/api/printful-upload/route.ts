@@ -92,19 +92,38 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: pub } = supabaseServer.storage
+    // We prefer a SIGNED URL over the public URL because some buckets are
+    // private by default and Printful's worker silently fails to fetch
+    // private files. A 24h signed URL works regardless of bucket visibility,
+    // and Printful only needs the URL for ~30 seconds while it renders.
+    const { data: signed, error: signedErr } = await supabaseServer.storage
       .from(BUCKET)
-      .getPublicUrl(path);
-    if (!pub?.publicUrl) {
+      .createSignedUrl(path, 60 * 60 * 24); // 24h
+
+    let url = signed?.signedUrl;
+    if (!url || signedErr) {
+      // Fallback to the plain public URL (works only if the bucket is public)
+      const { data: pub } = supabaseServer.storage
+        .from(BUCKET)
+        .getPublicUrl(path);
+      url = pub?.publicUrl;
+    }
+    if (!url) {
       return NextResponse.json(
-        { ok: false, error: "Public URL oluşturulamadı." },
+        {
+          ok: false,
+          error:
+            "URL oluşturulamadı (signed + public ikisi de başarısız). Bucket varlığını kontrol et.",
+          uploadedPath: path,
+        },
         { status: 502 }
       );
     }
 
     return NextResponse.json({
       ok: true,
-      publicUrl: pub.publicUrl,
+      publicUrl: url, // historical field name; may be signed or public
+      signed: !!signed?.signedUrl,
       path,
       size: parsed.buffer.length,
     });

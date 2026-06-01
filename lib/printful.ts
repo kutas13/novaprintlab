@@ -226,6 +226,11 @@ interface CreateMockupTaskResponse {
 export async function createMockupTask(
   params: CreateMockupTaskParams
 ): Promise<number> {
+  // We deliberately DO NOT pass a `position` block. Printful applies a
+  // sensible default placement (centered chest, max safe print area) when
+  // the layer omits position, which is the most robust setting for the
+  // generator. Passing position requires exact inch dimensions per product
+  // and a wrong value silently produces a blank / scaled mockup.
   const body = {
     format: params.format ?? "jpg",
     mockup_width_px: params.widthPx ?? 1000,
@@ -247,12 +252,6 @@ export async function createMockupTask(
               {
                 type: "file",
                 url: params.designUrl,
-                position: {
-                  width: 11,
-                  height: 11,
-                  top: 4,
-                  left: 4.75,
-                },
               },
             ],
           },
