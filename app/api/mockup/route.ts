@@ -320,16 +320,17 @@ export async function POST(req: Request) {
           type: "image/png",
         });
         try {
+          // NOTE: output_format / output_compression aren't in the bundled
+          // OpenAI SDK's ImageEditParams type. We fall back to the default
+          // PNG output here — payload is ~4× larger but the SDK accepts it
+          // out of the box. To re-enable JPEG bump the openai package to a
+          // version that types these fields and add them back.
           const res = await openai.images.edit({
             model: "gpt-image-1",
             image: file,
             prompt,
             size: "1024x1024",
             quality,
-            // JPEG output keeps payload ~4× smaller than PNG; mockup is
-            // photographic so JPEG artifacting is invisible at 85 quality.
-            output_format: "jpeg",
-            output_compression: 85,
           });
           b64 = res.data?.[0]?.b64_json;
           if (!b64) throw new Error("Mockup üretilemedi (boş yanıt).");
@@ -367,7 +368,7 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    const imageDataUrl = `data:image/jpeg;base64,${b64}`;
+    const imageDataUrl = `data:image/png;base64,${b64}`;
 
     return NextResponse.json({
       ok: true,
