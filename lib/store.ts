@@ -24,7 +24,12 @@ interface DesignState {
   initialize: () => Promise<void>;
   refresh: () => Promise<void>;
 
-  addDesign: (name: string, file: File, sku?: string) => Promise<Design | null>;
+  addDesign: (
+    name: string,
+    file: File,
+    sku?: string,
+    initialStatus?: DesignStatus
+  ) => Promise<Design | null>;
   updateSeo: (id: string, seo: SeoData) => Promise<void>;
   updateSku: (id: string, sku: string) => Promise<void>;
   updatePricing: (id: string, pricing: PricingData) => Promise<void>;
@@ -146,14 +151,14 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     set({ designs: rowsToDesigns(data as DesignRow[]) });
   },
 
-  addDesign: async (name, file, sku) => {
+  addDesign: async (name, file, sku, initialStatus) => {
     set({ uploading: true });
     let uploadedPath: string | null = null;
     try {
       uploadedPath = await uploadImage(file, "originals");
       const payload: Record<string, unknown> = {
         name: name.trim() || "Untitled Design",
-        status: "SEO Bekliyor" as DesignStatus,
+        status: (initialStatus ?? "SEO Bekliyor") as DesignStatus,
         original_image_path: uploadedPath,
       };
       const trimmedSku = sku?.trim();

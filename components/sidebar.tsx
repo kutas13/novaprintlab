@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   Wallet,
   Wand2,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -46,6 +47,13 @@ const NAV: NavItem[] = [
     href: "/dashboard/olustur",
     icon: Wand2,
     accent: "from-fuchsia-500 to-pink-500",
+    group: "main",
+  },
+  {
+    label: "AI Mockup Stüdyosu",
+    href: "/dashboard/mockup",
+    icon: Layers,
+    accent: "from-blue-500 to-violet-600",
     group: "main",
   },
   {

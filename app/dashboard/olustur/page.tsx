@@ -15,6 +15,8 @@ import {
   Layers,
   Zap,
   ChevronDown,
+  Send,
+  CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -22,20 +24,77 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useDesignStore } from "@/lib/store";
 
 // ─── SHARED CONSTANTS ───────────────────────────────────────────────────────
-const STYLES = [
-  "Vintage",
-  "Retro",
-  "Minimal",
-  "Sokak Giyimi",
-  "Y2K",
-  "Anime",
-  "Spor",
-  "Dövme",
-  "Graffiti",
-  "Psychedelic",
-] as const;
+type StyleDef = { key: string; tr: string; vibe: string };
+
+const STYLES: StyleDef[] = [
+  {
+    key: "Vintage",
+    tr: "Solgun ve toprak tonlu palet, yıpranmış doku, 70-80'ler nostaljik poster havası, eski matbaa hissi.",
+    vibe: "yıpranmış kağıt + sıcak ton",
+  },
+  {
+    key: "Retro",
+    tr: "Canlı 60-90 arası grafik kodları, klasik blok tipografi, retro şeritler ve dalgalar, nostaljik kontrast.",
+    vibe: "neon-vintage + güçlü tipografi",
+  },
+  {
+    key: "Minimal",
+    tr: "Bol boşluk, tek çizgi form, nötr palet, ince zarif tipografi — sade ama lüks bir bestseller görünümü.",
+    vibe: "az çok eder",
+  },
+  {
+    key: "Sokak Giyimi",
+    tr: "Streetwear & skate kültürü; agresif tipografi, bold bloklar, asfalt-grunge dokular, urban hissiyat.",
+    vibe: "asfalt + agresif tipo",
+  },
+  {
+    key: "Y2K",
+    tr: "2000'ler nostaljisi, metalik/krom efektler, kelebek ve yıldız motifleri, parlak gradientler.",
+    vibe: "krom + glitter",
+  },
+  {
+    key: "Anime",
+    tr: "Manga/anime karakter hattı, dinamik aksiyon pozları, hız çizgileri, yarı-çelik bakışlar.",
+    vibe: "dinamik karakter çizgisi",
+  },
+  {
+    key: "Spor",
+    tr: "Varsity üniversite tipografisi, atletik blok şeritleri, takım renkleri, vintage rozet ve numaralar.",
+    vibe: "varsity + atletik blok",
+  },
+  {
+    key: "Dövme",
+    tr: "Old-school tattoo flash; kalın siyah kontur, gül/kafatası/hançer motifleri, sembolik kompozisyon.",
+    vibe: "siyah kontur + sembol",
+  },
+  {
+    key: "Graffiti",
+    tr: "Spray boya dokuları, drip akma efektleri, sokak duvarı hissi, wildstyle sokak fontları.",
+    vibe: "spray + drip",
+  },
+  {
+    key: "Psychedelic",
+    tr: "60-70 psychedelic estetik, çarpık tipografi, swirl ve dalga motifleri, kontrast canlı renkler.",
+    vibe: "swirl + trippy renk",
+  },
+];
+
+function describeStyleSelection(keys: string[]): string {
+  const map = Object.fromEntries(STYLES.map((s) => [s.key, s]));
+  if (keys.length === 0) return "";
+  if (keys.length === 1) {
+    const s = map[keys[0]];
+    return s ? s.tr : "";
+  }
+  // 2 stil — harmanlama
+  const a = map[keys[0]];
+  const b = map[keys[1]];
+  if (!a || !b) return "";
+  return `${a.key} × ${b.key} füzyonu — ${a.vibe} ile ${b.vibe} aynı tasarımda birleştirilir. Sonuç: ${a.tr.replace(/[.。]$/, "")} bunun üzerine ${b.tr.toLowerCase()} AI iki estetiği dengeli bir kompozisyon olarak harmanlar.`;
+}
 
 const COLORS = [
   "Siyah",
@@ -104,7 +163,14 @@ const PRESETS = [
 ] as const;
 
 const HISTORY_KEY = "novaprint:generated-designs";
+const APPROVED_KEY = "novaprint:approved-ai-designs";
 const HISTORY_LIMIT = 12;
+
+async function dataUrlToFile(dataUrl: string, filename: string): Promise<File> {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  return new File([blob], filename, { type: blob.type || "image/png" });
+}
 
 interface GeneratedDesign {
   id: string;
@@ -144,6 +210,11 @@ export default function OlusturPage() {
   const [history, setHistory] = useState<GeneratedDesign[]>([]);
   const [copied, setCopied] = useState(false);
 
+  // Approval flow (Taha'ya gönder)
+  const addDesignToStore = useDesignStore((s) => s.addDesign);
+  const [approvedIds, setApprovedIds] = useState<string[]>([]);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -151,7 +222,53 @@ export default function OlusturPage() {
       const raw = localStorage.getItem(HISTORY_KEY);
       if (raw) setHistory(JSON.parse(raw));
     } catch {}
+    try {
+      const raw = localStorage.getItem(APPROVED_KEY);
+      if (raw) setApprovedIds(JSON.parse(raw));
+    } catch {}
   }, []);
+
+  const persistApproved = useCallback((next: string[]) => {
+    setApprovedIds(next);
+    try {
+      localStorage.setItem(APPROVED_KEY, JSON.stringify(next));
+    } catch {}
+  }, []);
+
+  const handleApprove = async (item: GeneratedDesign) => {
+    if (approvedIds.includes(item.id)) {
+      toast.info("Bu tasarım zaten Taha'ya gönderildi.");
+      return;
+    }
+    setApprovingId(item.id);
+    try {
+      const safe = item.prompt
+        .replace(/[^\p{L}\p{N}\s-]/gu, "")
+        .trim()
+        .slice(0, 60);
+      const filename = `${(safe || "ai-design")
+        .toLowerCase()
+        .replace(/\s+/g, "-")}-${item.id}.png`;
+      const file = await dataUrlToFile(item.imageDataUrl, filename);
+      const design = await addDesignToStore(
+        safe || "AI Tasarım",
+        file,
+        undefined,
+        "Mockup ve Yayınlama Bekliyor"
+      );
+      if (design) {
+        persistApproved([item.id, ...approvedIds]);
+        toast.success(`"${design.name}" Taha'nın kuyruğuna eklendi.`);
+      } else {
+        throw new Error("Tasarım eklenemedi.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Onay başarısız";
+      toast.error(msg, { duration: 6000 });
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   const persistHistory = useCallback((next: GeneratedDesign[]) => {
     setHistory(next);
@@ -515,16 +632,45 @@ export default function OlusturPage() {
             onClear={
               selectedStyles.length > 0 ? () => setSelectedStyles([]) : undefined
             }
+            footer={
+              selectedStyles.length > 0 ? (
+                <div
+                  className={cn(
+                    "mt-3 rounded-xl border p-3 transition-all",
+                    selectedStyles.length === 2
+                      ? "border-fuchsia-500/30 bg-gradient-to-br from-fuchsia-500/[0.07] to-pink-500/[0.04]"
+                      : "border-slate-700/60 bg-slate-950/40"
+                  )}
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-fuchsia-300 mb-1.5 flex items-center gap-1.5">
+                    {selectedStyles.length === 1 ? (
+                      <>
+                        <Sparkles className="h-3 w-3" />
+                        Bu stilde tasarım
+                      </>
+                    ) : (
+                      <>
+                        <Layers className="h-3 w-3" />
+                        Harmanlama özeti
+                      </>
+                    )}
+                  </p>
+                  <p className="text-[12px] leading-relaxed text-slate-300">
+                    {describeStyleSelection(selectedStyles)}
+                  </p>
+                </div>
+              ) : null
+            }
           >
             {STYLES.map((s) => {
-              const active = selectedStyles.includes(s);
+              const active = selectedStyles.includes(s.key);
               return (
                 <Chip
-                  key={s}
-                  label={s}
+                  key={s.key}
+                  label={s.key}
                   active={active}
                   disabled={generating}
-                  onClick={() => toggleStyle(s)}
+                  onClick={() => toggleStyle(s.key)}
                 />
               );
             })}
@@ -611,6 +757,9 @@ export default function OlusturPage() {
             onDownload={handleDownload}
             onCopy={handleCopyPrompt}
             copied={copied}
+            onApprove={handleApprove}
+            approvingId={approvingId}
+            isApproved={result ? approvedIds.includes(result.id) : false}
           />
         </div>
       </div>
@@ -663,6 +812,9 @@ export default function OlusturPage() {
                 onSelect={() => setResult(h)}
                 onDelete={() => handleDeleteHistoryItem(h.id)}
                 onDownload={() => handleDownload(h)}
+                onApprove={() => handleApprove(h)}
+                isApproved={approvedIds.includes(h.id)}
+                isApproving={approvingId === h.id}
               />
             ))}
           </div>
@@ -680,6 +832,7 @@ function OptionGroup({
   icon,
   onClear,
   children,
+  footer,
 }: {
   label: string;
   hint?: string;
@@ -687,6 +840,7 @@ function OptionGroup({
   icon?: React.ReactNode;
   onClear?: () => void;
   children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-slate-800/70 bg-slate-900/40 backdrop-blur p-4 sm:p-5">
@@ -717,6 +871,7 @@ function OptionGroup({
         </div>
       </div>
       <div className="flex flex-wrap gap-1.5">{children}</div>
+      {footer}
     </div>
   );
 }
@@ -755,13 +910,20 @@ function ResultPanel({
   onDownload,
   onCopy,
   copied,
+  onApprove,
+  approvingId,
+  isApproved,
 }: {
   result: GeneratedDesign | null;
   generating: boolean;
   onDownload: (item: GeneratedDesign) => void;
   onCopy: (text: string) => void;
   copied: boolean;
+  onApprove: (item: GeneratedDesign) => void;
+  approvingId: string | null;
+  isApproved: boolean;
 }) {
+  const approving = result ? approvingId === result.id : false;
   return (
     <div className="lg:sticky lg:top-6 space-y-4">
       <div className="rounded-2xl border border-slate-800/70 bg-slate-900/40 backdrop-blur overflow-hidden shadow-elev-2">
@@ -847,7 +1009,7 @@ function ResultPanel({
               <Button
                 onClick={() => onDownload(result)}
                 size="sm"
-                variant="success"
+                variant="outline"
                 className="flex-1"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -870,6 +1032,41 @@ function ResultPanel({
                 )}
               </Button>
             </div>
+
+            {/* Onay → Taha'ya gönder */}
+            <Button
+              onClick={() => onApprove(result)}
+              disabled={approving || isApproved}
+              size="lg"
+              variant={isApproved ? "secondary" : "success"}
+              className={cn(
+                "w-full mt-1",
+                isApproved &&
+                  "!bg-emerald-500/15 !text-emerald-300 !ring-1 !ring-emerald-500/30 cursor-default"
+              )}
+            >
+              {approving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Taha&apos;ya gönderiliyor…
+                </>
+              ) : isApproved ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4" />
+                  Onaylandı — Taha&apos;nın kuyruğunda
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" />
+                  Onayla &amp; Taha&apos;ya Gönder
+                </>
+              )}
+            </Button>
+            <p className="text-[10.5px] text-slate-500 leading-relaxed">
+              Onaylanan tasarım Supabase&apos;e kaydedilir ve{" "}
+              <span className="text-slate-400 font-medium">Mockup ve Yayınlama Bekliyor</span>{" "}
+              statüsünde Taha&apos;nın kuyruğuna düşer.
+            </p>
           </div>
         )}
       </div>
@@ -921,22 +1118,37 @@ function HistoryCard({
   onSelect,
   onDelete,
   onDownload,
+  onApprove,
+  isApproved,
+  isApproving,
 }: {
   item: GeneratedDesign;
   isActive: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onDownload: () => void;
+  onApprove: () => void;
+  isApproved: boolean;
+  isApproving: boolean;
 }) {
   return (
     <div
       className={cn(
         "group relative rounded-2xl border bg-gradient-to-br from-slate-900/60 to-slate-900/30 backdrop-blur overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-elev-3",
-        isActive
-          ? "border-fuchsia-500/40 ring-1 ring-fuchsia-500/30"
-          : "border-slate-800/70 hover:border-slate-700"
+        isApproved
+          ? "border-emerald-500/40 ring-1 ring-emerald-500/25"
+          : isActive
+            ? "border-fuchsia-500/40 ring-1 ring-fuchsia-500/30"
+            : "border-slate-800/70 hover:border-slate-700"
       )}
     >
+      {isApproved && (
+        <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full bg-emerald-500/85 text-[10px] font-bold text-white flex items-center gap-1 shadow-md backdrop-blur-sm">
+          <CheckCircle2 className="h-2.5 w-2.5" />
+          Onaylandı
+        </div>
+      )}
+
       <button
         onClick={onSelect}
         className="block w-full aspect-square checkerboard relative"
@@ -954,10 +1166,40 @@ function HistoryCard({
           {item.prompt}
         </p>
 
+        <button
+          onClick={onApprove}
+          disabled={isApproved || isApproving}
+          className={cn(
+            "w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-all border",
+            isApproved
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 cursor-default"
+              : isApproving
+                ? "bg-slate-800/60 border-slate-700 text-slate-400"
+                : "bg-gradient-to-br from-emerald-500/15 to-teal-500/10 border-emerald-500/30 text-emerald-300 hover:from-emerald-500/25 hover:to-teal-500/15 hover:border-emerald-500/50"
+          )}
+        >
+          {isApproving ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Gönderiliyor…
+            </>
+          ) : isApproved ? (
+            <>
+              <CheckCircle2 className="h-3 w-3" />
+              Taha&apos;da
+            </>
+          ) : (
+            <>
+              <Send className="h-3 w-3" />
+              Taha&apos;ya Gönder
+            </>
+          )}
+        </button>
+
         <div className="flex items-center gap-1 pt-0.5">
           <button
             onClick={onDownload}
-            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 hover:text-emerald-300 text-[11px] font-semibold text-slate-300 transition-colors"
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800/60 hover:bg-blue-500/20 hover:text-blue-300 text-[11px] font-semibold text-slate-300 transition-colors"
           >
             <Download className="h-3 w-3" />
             PNG

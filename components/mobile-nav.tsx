@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   Wand2,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -29,6 +30,7 @@ const PRIMARY = [
 
 const SECONDARY = [
   { label: "Siparişler", href: "/dashboard/siparisler", icon: ShoppingBag, accent: "from-cyan-500 to-sky-600" },
+  { label: "AI Mockup Stüdyo", href: "/dashboard/mockup", icon: Layers, accent: "from-blue-500 to-violet-600" },
   { label: "Taha — Mockup", href: "/dashboard/taha", icon: ImageIcon, accent: "from-amber-500 to-orange-500" },
   { label: "Taslaklar", href: "/dashboard/taslaklar", icon: FileEdit, accent: "from-pink-500 to-rose-500" },
   { label: "Aktif Ürünler", href: "/dashboard/urunler", icon: Package, accent: "from-rose-500 to-red-500" },
