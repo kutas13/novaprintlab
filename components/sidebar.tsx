@@ -13,6 +13,7 @@ import {
   FileEdit,
   ShoppingBag,
   Wallet,
+  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -38,6 +39,13 @@ const NAV: NavItem[] = [
     href: "/dashboard/siparisler",
     icon: ShoppingBag,
     accent: "from-cyan-500 to-sky-600",
+    group: "main",
+  },
+  {
+    label: "AI Tasarım Stüdyosu",
+    href: "/dashboard/olustur",
+    icon: Wand2,
+    accent: "from-fuchsia-500 to-pink-500",
     group: "main",
   },
   {

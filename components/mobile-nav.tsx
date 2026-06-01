@@ -15,18 +15,20 @@ import {
   Wallet,
   Menu,
   X,
+  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const PRIMARY = [
   { label: "Takvim", href: "/dashboard", icon: CalendarDays, accent: "from-sky-500 to-blue-600" },
-  { label: "Siparişler", href: "/dashboard/siparisler", icon: ShoppingBag, accent: "from-cyan-500 to-sky-600" },
+  { label: "AI Stüdyo", href: "/dashboard/olustur", icon: Wand2, accent: "from-fuchsia-500 to-pink-500" },
   { label: "Yusuf", href: "/dashboard/yusuf", icon: Upload, accent: "from-emerald-500 to-teal-500" },
   { label: "Kerim", href: "/dashboard/kerim", icon: Sparkles, accent: "from-violet-500 to-fuchsia-500" },
 ];
 
 const SECONDARY = [
+  { label: "Siparişler", href: "/dashboard/siparisler", icon: ShoppingBag, accent: "from-cyan-500 to-sky-600" },
   { label: "Taha — Mockup", href: "/dashboard/taha", icon: ImageIcon, accent: "from-amber-500 to-orange-500" },
   { label: "Taslaklar", href: "/dashboard/taslaklar", icon: FileEdit, accent: "from-pink-500 to-rose-500" },
   { label: "Aktif Ürünler", href: "/dashboard/urunler", icon: Package, accent: "from-rose-500 to-red-500" },
