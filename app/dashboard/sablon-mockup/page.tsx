@@ -500,7 +500,9 @@ export default function TemplateMockupPage() {
                           alt={tpl.label}
                           className="w-full h-full object-cover"
                         />
-                        {/* Print area overlay */}
+                        {/* Print area overlay — rotated to match the
+                            slider so the gallery thumbnail also previews
+                            tilt without having to open the editor. */}
                         <div
                           className="absolute border-2 border-rose-500/80 pointer-events-none"
                           style={{
@@ -508,6 +510,8 @@ export default function TemplateMockupPage() {
                             top: `${tpl.printArea.y * 100}%`,
                             width: `${tpl.printArea.w * 100}%`,
                             height: `${tpl.printArea.h * 100}%`,
+                            transform: `rotate(${tpl.printArea.rotation || 0}deg)`,
+                            transformOrigin: "center center",
                           }}
                         />
                         {isSelected && (
@@ -897,6 +901,13 @@ function PrintAreaEditor({
             className="w-full h-full object-cover pointer-events-none"
             draggable={false}
           />
+          {/* Pink print area box. The CSS `transform: rotate(...)` is
+              applied around the box's own center (transform-origin defaults
+              to 50% 50%), matching exactly what the renderer does at
+              composite time — so what the user sees here is pixel-faithful
+              to what comes out of the JPEG.
+              `willChange: transform` keeps the rotation buttery smooth
+              even while the user is dragging the slider quickly. */}
           <div
             className="absolute border-2 border-rose-400 bg-rose-500/10 cursor-move"
             style={{
@@ -904,11 +915,20 @@ function PrintAreaEditor({
               top: `${template.printArea.y * 100}%`,
               width: `${template.printArea.w * 100}%`,
               height: `${template.printArea.h * 100}%`,
+              transform: `rotate(${template.printArea.rotation || 0}deg)`,
+              transformOrigin: "center center",
+              willChange: "transform",
+              transition: dragging ? "none" : "transform 120ms ease-out",
             }}
             onPointerDown={(e) => handlePointerDown(e, "move")}
           >
-            <div className="absolute -top-5 left-0 text-[10px] font-bold uppercase tracking-wider text-rose-300 bg-slate-900/80 px-1.5 py-0.5 rounded">
+            <div className="absolute -top-5 left-0 text-[10px] font-bold uppercase tracking-wider text-rose-300 bg-slate-900/80 px-1.5 py-0.5 rounded whitespace-nowrap">
               Print Bölgesi
+              {Math.abs(template.printArea.rotation || 0) > 0.1 && (
+                <span className="ml-1 text-rose-200">
+                  · {(template.printArea.rotation || 0).toFixed(1)}°
+                </span>
+              )}
             </div>
             {/* resize handle bottom-right */}
             <div
