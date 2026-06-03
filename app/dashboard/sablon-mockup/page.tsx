@@ -24,6 +24,7 @@ import {
   Eye,
   CheckCircle2,
   AlertCircle,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,13 @@ interface MockupResult {
   templateLabel: string;
   imageDataUrl: string;
   createdAt: number;
+  /** Design these mockups were generated for. Required so the
+   *  "Onayla & Taslağa Gönder" button knows which design row to attach
+   *  the mockup to. `null` means the user picked an upload (no Supabase
+   *  design row exists) — in that case the approve button is hidden. */
+  designId: string | null;
+  /** Cached label for filenames & toasts. */
+  designName: string;
 }
 
 const slug = (s: string) =>
@@ -95,9 +103,23 @@ const slug = (s: string) =>
     .replace(/^-|-$/g, "")
     .slice(0, 40) || "mockup";
 
+/** Decode a `data:image/jpeg;base64,...` URL into a Blob without going
+ *  through `fetch()` — saves a round trip and works in any context.   */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) throw new Error("Geçersiz data URL");
+  const mime = match[1];
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
 export default function TemplateMockupPage() {
   const designs = useDesignStore((s) => s.designs);
   const initStore = useDesignStore((s) => s.initialize);
+  const addMockupsToDesign = useDesignStore((s) => s.addMockups);
+  const saveAsDraft = useDesignStore((s) => s.saveAsDraft);
 
   useEffect(() => {
     initStore().catch(() => {});
@@ -424,11 +446,27 @@ export default function TemplateMockupPage() {
       return;
     }
     setGenerating(true);
-    setResults([]);
+    // NOTE: We intentionally DON'T clear previous results here. Each
+    // generation run appends to the existing list — the user wants to
+    // build up a pile of mockups across multiple designs and only
+    // approve/discard them one-by-one. The "Sıfırla" button is the
+    // explicit way to clear.
     const designSrc =
       selectedDesign.type === "store"
         ? selectedDesign.imageUrl
         : selectedDesign.imageDataUrl;
+
+    // Resolve a human-readable design name + the Supabase design row id
+    // (if any) so the approve button later can attach mockups to the
+    // right design row.
+    const designName =
+      selectedDesign.type === "store"
+        ? selectedDesign.prompt ?? "tasarim"
+        : selectedDesign.type === "upload"
+        ? selectedDesign.name
+        : selectedDesign.prompt;
+    const linkedDesignId =
+      selectedDesign.type === "store" ? selectedDesign.id : null;
 
     const collected: MockupResult[] = [];
     const errors: string[] = [];
@@ -442,6 +480,8 @@ export default function TemplateMockupPage() {
           templateLabel: tpl.label,
           imageDataUrl: dataUrl,
           createdAt: Date.now(),
+          designId: linkedDesignId,
+          designName,
         };
         collected.push(item);
         setResults((prev) => [...prev, item]); // Stream into UI as they finish
@@ -460,6 +500,51 @@ export default function TemplateMockupPage() {
       );
     } else {
       toast.success(`${collected.length} mockup üretildi · $0 maliyet`);
+    }
+  };
+
+  // ─── APPROVE → SEND TO DRAFTS ────────────────────────────────────────
+  /** Map of mockup result id → "approving" so we can disable/spinner the
+   *  individual button while the upload + status update is in flight. */
+  const [approving, setApproving] = useState<Record<string, boolean>>({});
+
+  const approveAndSendToDrafts = async (item: MockupResult) => {
+    if (!item.designId) {
+      toast.error(
+        "Bu mockup bir mağaza tasarımına bağlı değil — önce tasarımı yükle (Yusuf sayfası) veya AI Stüdyo'da onaylat."
+      );
+      return;
+    }
+    if (approving[item.id]) return;
+    setApproving((m) => ({ ...m, [item.id]: true }));
+    try {
+      // Convert the data URL → File so addMockups() (which expects File[]
+      // for Supabase storage upload) can ingest it.
+      const blob = dataUrlToBlob(item.imageDataUrl);
+      const filename = `${slug(item.designName)}-${slug(item.templateLabel)}-${
+        item.id
+      }.jpg`;
+      const file = new File([blob], filename, { type: "image/jpeg" });
+
+      await addMockupsToDesign(item.designId, [file]);
+      // Move design into the Taslaklar bucket so Yusuf can price & publish.
+      await saveAsDraft(item.designId);
+
+      // Pop it out of the local results list — that's the user's signal
+      // the mockup is now safely upstream.
+      setResults((prev) => prev.filter((r) => r.id !== item.id));
+      toast.success(
+        `'${item.designName}' taslağa gönderildi (${item.templateLabel})`
+      );
+    } catch (e) {
+      console.error("[approveAndSendToDrafts]", e);
+      toast.error("Taslağa gönderilemedi. Tekrar dene.");
+    } finally {
+      setApproving((m) => {
+        const next = { ...m };
+        delete next[item.id];
+        return next;
+      });
     }
   };
 
@@ -850,34 +935,88 @@ export default function TemplateMockupPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {results.map((r) => (
-                  <div
-                    key={r.id}
-                    className="rounded-xl border border-slate-800/70 bg-slate-950/60 overflow-hidden group"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={r.imageDataUrl}
-                      alt={r.templateLabel}
-                      className="w-full aspect-square object-cover"
-                    />
-                    <div className="p-2.5 flex items-center justify-between gap-2">
-                      <p
-                        className="text-[11px] text-slate-300 truncate flex-1"
-                        title={r.templateLabel}
-                      >
-                        {r.templateLabel}
-                      </p>
-                      <button
-                        onClick={() => downloadOne(r)}
-                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-emerald-500/20 text-slate-300 hover:text-emerald-200 transition"
-                        title="İndir"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                      </button>
+                {results.map((r) => {
+                  const isApproving = !!approving[r.id];
+                  const canApprove = !!r.designId;
+                  return (
+                    <div
+                      key={r.id}
+                      className="rounded-xl border border-slate-800/70 bg-slate-950/60 overflow-hidden group flex flex-col"
+                    >
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={r.imageDataUrl}
+                          alt={r.templateLabel}
+                          className="w-full aspect-square object-cover"
+                        />
+                        {isApproving && (
+                          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-1.5">
+                            <Loader2 className="h-6 w-6 animate-spin text-emerald-400" />
+                            <p className="text-[11px] font-semibold text-emerald-200">
+                              Taslağa yükleniyor…
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-2 flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p
+                              className="text-[11px] text-slate-200 truncate font-semibold"
+                              title={r.designName}
+                            >
+                              {r.designName}
+                            </p>
+                            <p
+                              className="text-[10px] text-slate-500 truncate"
+                              title={r.templateLabel}
+                            >
+                              {r.templateLabel}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => downloadOne(r)}
+                            disabled={isApproving}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-200 transition disabled:opacity-40"
+                            title="İndir"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => approveAndSendToDrafts(r)}
+                          disabled={!canApprove || isApproving}
+                          title={
+                            !canApprove
+                              ? "Yüklenmiş PNG'ler taslağa gönderilemez — önce Yusuf sayfasından mağazaya yükle."
+                              : "Bu mockup'u onayla, mağaza tasarımına ekle ve taslaklara gönder"
+                          }
+                          className={cn(
+                            "w-full inline-flex items-center justify-center gap-1.5 h-7 rounded-lg text-[11px] font-bold transition-all",
+                            !canApprove
+                              ? "bg-slate-800/50 text-slate-600 cursor-not-allowed"
+                              : isApproving
+                              ? "bg-emerald-500/10 text-emerald-300"
+                              : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/30 hover:shadow-emerald-500/50 hover:-translate-y-0.5"
+                          )}
+                        >
+                          {isApproving ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Gönderiliyor…
+                            </>
+                          ) : (
+                            <>
+                              <Send className="h-3 w-3" />
+                              Onayla · Taslağa Gönder
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
