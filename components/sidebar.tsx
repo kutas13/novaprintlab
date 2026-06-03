@@ -57,6 +57,13 @@ const NAV: NavItem[] = [
     group: "main",
   },
   {
+    label: "Şablon Mockup",
+    href: "/dashboard/sablon-mockup",
+    icon: Package,
+    accent: "from-emerald-500 to-teal-500",
+    group: "main",
+  },
+  {
     label: "Yusuf — Tasarım",
     href: "/dashboard/yusuf",
     icon: Upload,
