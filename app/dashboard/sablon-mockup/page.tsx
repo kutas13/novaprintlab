@@ -26,9 +26,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useDesignStore } from "@/lib/store";
 import { idbGet, idbSet, idbDel } from "@/lib/idb-kv";
@@ -575,17 +573,16 @@ export default function TemplateMockupPage() {
   const totalRenders = selectedTemplateIds.size;
 
   return (
-    <div className="p-4 sm:p-6 space-y-5">
-      <PageHeader
-        title="Şablon Mockup"
-        description="AI yok, kota yok, sınırsız üretim. Kendi blank ürün fotoğraflarını yükle, tasarımı üzerine overlay et, anında mockup al."
-        icon={<Layers className="h-5 w-5" />}
-        accent="from-emerald-500 to-teal-600"
-      >
-        <Badge className="gap-1.5 bg-emerald-500/15 text-emerald-200 border-emerald-500/30">
-          <Sparkles className="h-3 w-3" /> $0 · Sınırsız
-        </Badge>
-      </PageHeader>
+    <div className="p-4 sm:p-6 space-y-5 pb-32">
+      {/* ─── HERO — gradient banner + live stats ───────────────────── */}
+      <Hero
+        templateCount={templates.length}
+        folderCount={folders.length}
+        designCount={storeDesigns.length + uploadedDesigns.length}
+        renderCount={results.length}
+        selectedTemplateCount={selectedTemplateIds.size}
+        hasSelectedDesign={!!selectedDesign}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)] gap-5">
         {/* ─── LEFT PANEL ─── */}
@@ -790,38 +787,15 @@ export default function TemplateMockupPage() {
             )}
           </Section>
 
-          {/* 3) Generate */}
-          <Button
-            onClick={handleGenerate}
-            disabled={
-              generating ||
-              !selectedDesign ||
-              selectedTemplateIds.size === 0
-            }
-            size="lg"
-            className="w-full !bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 !shadow-emerald-500/30 hover:!shadow-emerald-500/50 text-base h-14"
-          >
-            {generating ? (
-              <>
-                <Loader2 className="h-5 w-5 animate-spin" />
-                Mockuplar Üretiliyor…
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-5 w-5" />
-                Mockup Üret ({totalRenders}) · ÜCRETSİZ
-              </>
-            )}
-          </Button>
-
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3 flex gap-2.5 text-[11px] text-emerald-200/80 leading-relaxed">
             <Sparkles className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
             <span>
               <span className="font-bold text-emerald-200">
-                Tamamen offline:
+                Otomatik renk algılama:
               </span>{" "}
-              Mockup tarayıcında üretilir, hiçbir API çağrısı yok, hiçbir kota
-              yok, hiçbir maliyet yok. Sınırsız üret.
+              Beyaz tasarımlar koyu kumaşa screen blend, siyah tasarımlar
+              açık kumaşa multiply blend ile yerleşir. Hiçbir tasarım
+              kararmaz.
             </span>
           </div>
         </div>
@@ -909,11 +883,357 @@ export default function TemplateMockupPage() {
           </div>
         </div>
       </div>
+
+      {/* ─── STICKY ACTION BAR ─────────────────────────────────────── */}
+      <ActionBar
+        canGenerate={
+          !generating && !!selectedDesign && selectedTemplateIds.size > 0
+        }
+        generating={generating}
+        selectedTemplateCount={selectedTemplateIds.size}
+        hasDesign={!!selectedDesign}
+        resultCount={results.length}
+        onGenerate={handleGenerate}
+        onZip={downloadAllZip}
+        onClear={() => setResults([])}
+      />
     </div>
   );
 }
 
 // ─── SUB-COMPONENTS ────────────────────────────────────────────────────────
+
+/** Top-of-page hero banner. Big gradient, headline, and a row of live
+ *  stat tiles so the user can see their workspace at a glance — total
+ *  templates, folders, selected design, current run, and a "$0" badge
+ *  reinforcing the AI-free / no-quota pitch. */
+function Hero({
+  templateCount,
+  folderCount,
+  designCount,
+  renderCount,
+  selectedTemplateCount,
+  hasSelectedDesign,
+}: {
+  templateCount: number;
+  folderCount: number;
+  designCount: number;
+  renderCount: number;
+  selectedTemplateCount: number;
+  hasSelectedDesign: boolean;
+}) {
+  // Stage progress (1/2/3) helps users new to the page understand they
+  // need to (a) pick a design, (b) pick templates, (c) hit generate.
+  const stage = !hasSelectedDesign
+    ? 1
+    : selectedTemplateCount === 0
+    ? 2
+    : 3;
+
+  return (
+    <div className="relative overflow-hidden rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/[0.12] via-slate-900/40 to-cyan-500/[0.08] backdrop-blur shadow-elev-3">
+      {/* Decorative blobs — pure CSS, no images */}
+      <div className="absolute -top-32 -right-32 w-80 h-80 rounded-full bg-emerald-500/20 blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-32 -left-32 w-80 h-80 rounded-full bg-cyan-500/20 blur-3xl pointer-events-none" />
+
+      <div className="relative p-5 sm:p-7 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 items-center">
+        {/* Left — title + stage stepper */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2.5">
+            <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30">
+              <Layers className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+                Mockup Stüdyosu
+              </h1>
+              <p className="text-[12px] text-emerald-200/80 mt-0.5">
+                Kendi blank fotoğraflarınla,{" "}
+                <span className="font-bold text-emerald-300">
+                  $0 maliyet
+                </span>
+                , anında mockup. AI yok, kota yok.
+              </p>
+            </div>
+          </div>
+
+          {/* Stage stepper */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <StageStep
+              n={1}
+              label="Tasarım"
+              done={stage > 1}
+              active={stage === 1}
+            />
+            <StageArrow done={stage > 1} />
+            <StageStep
+              n={2}
+              label={`${selectedTemplateCount || ""} Şablon`}
+              done={stage > 2}
+              active={stage === 2}
+            />
+            <StageArrow done={stage > 2} />
+            <StageStep
+              n={3}
+              label="Üret"
+              done={false}
+              active={stage === 3}
+            />
+          </div>
+        </div>
+
+        {/* Right — stat tiles */}
+        <div className="grid grid-cols-4 lg:grid-cols-4 gap-2">
+          <StatTile icon={Wand2} label="Tasarım" value={designCount} accent="fuchsia" />
+          <StatTile icon={Package} label="Şablon" value={templateCount} accent="emerald" />
+          <StatTile icon={FolderIcon} label="Klasör" value={folderCount} accent="cyan" />
+          <StatTile icon={Sparkles} label="Üretildi" value={renderCount} accent="amber" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StageStep({
+  n,
+  label,
+  done,
+  active,
+}: {
+  n: number;
+  label: string;
+  done: boolean;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border transition",
+        done
+          ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/40"
+          : active
+          ? "bg-amber-500/20 text-amber-200 border-amber-400/50 shadow-elev-1 ring-2 ring-amber-400/30"
+          : "bg-slate-900/60 text-slate-400 border-slate-800"
+      )}
+    >
+      <span
+        className={cn(
+          "h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-extrabold",
+          done
+            ? "bg-emerald-500 text-white"
+            : active
+            ? "bg-amber-400 text-slate-900"
+            : "bg-slate-800 text-slate-500"
+        )}
+      >
+        {done ? <CheckCircle2 className="h-3 w-3" /> : n}
+      </span>
+      {label}
+    </div>
+  );
+}
+
+function StageArrow({ done }: { done: boolean }) {
+  return (
+    <span
+      className={cn(
+        "text-xs transition-colors",
+        done ? "text-emerald-300" : "text-slate-700"
+      )}
+    >
+      →
+    </span>
+  );
+}
+
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  accent,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: number;
+  accent: "fuchsia" | "emerald" | "cyan" | "amber";
+}) {
+  const tones: Record<
+    string,
+    { ring: string; bg: string; text: string; glow: string }
+  > = {
+    fuchsia: {
+      ring: "ring-fuchsia-500/30",
+      bg: "bg-fuchsia-500/10",
+      text: "text-fuchsia-300",
+      glow: "shadow-fuchsia-500/20",
+    },
+    emerald: {
+      ring: "ring-emerald-500/30",
+      bg: "bg-emerald-500/10",
+      text: "text-emerald-300",
+      glow: "shadow-emerald-500/20",
+    },
+    cyan: {
+      ring: "ring-cyan-500/30",
+      bg: "bg-cyan-500/10",
+      text: "text-cyan-300",
+      glow: "shadow-cyan-500/20",
+    },
+    amber: {
+      ring: "ring-amber-500/30",
+      bg: "bg-amber-500/10",
+      text: "text-amber-300",
+      glow: "shadow-amber-500/20",
+    },
+  };
+  const t = tones[accent];
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border border-slate-800/60 bg-slate-950/40 backdrop-blur p-2.5 sm:p-3 flex flex-col gap-1.5 shadow-elev-1 transition hover:-translate-y-0.5",
+        t.glow
+      )}
+    >
+      <span
+        className={cn(
+          "h-7 w-7 rounded-lg flex items-center justify-center ring-1",
+          t.bg,
+          t.ring
+        )}
+      >
+        <Icon className={cn("h-3.5 w-3.5", t.text)} />
+      </span>
+      <div className="text-xl font-extrabold text-white tabular-nums leading-none">
+        {value}
+      </div>
+      <div className="text-[9.5px] uppercase tracking-wider text-slate-500 font-semibold">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+/** Bottom sticky bar — primary "Mockup Üret" CTA + secondary actions
+ *  (Sıfırla, ZIP). Stays visible no matter how far the user has scrolled
+ *  through templates or results so the action is always one click away. */
+function ActionBar({
+  canGenerate,
+  generating,
+  selectedTemplateCount,
+  hasDesign,
+  resultCount,
+  onGenerate,
+  onZip,
+  onClear,
+}: {
+  canGenerate: boolean;
+  generating: boolean;
+  selectedTemplateCount: number;
+  hasDesign: boolean;
+  resultCount: number;
+  onGenerate: () => void;
+  onZip: () => void;
+  onClear: () => void;
+}) {
+  const blockedReason = !hasDesign
+    ? "Tasarım seç"
+    : selectedTemplateCount === 0
+    ? "Şablon seç"
+    : null;
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-30 pointer-events-none">
+      <div className="mx-auto max-w-7xl px-3 sm:px-6 pb-3 sm:pb-4">
+        <div className="pointer-events-auto rounded-2xl border border-emerald-500/30 bg-slate-950/85 backdrop-blur-xl shadow-2xl shadow-emerald-500/20 p-2.5 sm:p-3 flex items-center gap-2 sm:gap-3">
+          {/* Status pill — what's selected right now */}
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] font-semibold text-slate-300 min-w-0">
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                canGenerate ? "bg-emerald-400 animate-pulse" : "bg-slate-600"
+              )}
+            />
+            {generating ? (
+              <span>Üretiliyor…</span>
+            ) : canGenerate ? (
+              <span className="truncate">
+                <span className="text-emerald-300">
+                  {selectedTemplateCount}
+                </span>{" "}
+                şablon × 1 tasarım ={" "}
+                <span className="text-emerald-300">
+                  {selectedTemplateCount}
+                </span>{" "}
+                mockup
+              </span>
+            ) : (
+              <span className="text-amber-300">
+                <AlertCircle className="h-3 w-3 inline -mt-0.5 mr-1" />
+                {blockedReason}
+              </span>
+            )}
+          </div>
+
+          {/* Secondary actions — only when there are results to act on */}
+          {resultCount > 0 && (
+            <>
+              <button
+                onClick={onClear}
+                disabled={generating}
+                className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-800 hover:border-slate-700 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-semibold text-slate-300 disabled:opacity-40 transition"
+                title="Üretilen mockupları sıfırla"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Sıfırla
+              </button>
+              <button
+                onClick={onZip}
+                disabled={generating}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-[11px] font-semibold text-cyan-200 disabled:opacity-40 transition"
+                title="Tüm mockupları ZIP olarak indir"
+              >
+                <Download className="h-3.5 w-3.5" />
+                ZIP ({resultCount})
+              </button>
+            </>
+          )}
+
+          {/* Primary CTA — flex-1 so it grows */}
+          <button
+            onClick={onGenerate}
+            disabled={!canGenerate}
+            className={cn(
+              "flex-1 inline-flex items-center justify-center gap-2 h-11 sm:h-12 px-4 sm:px-6 rounded-xl text-sm font-bold text-white transition-all",
+              canGenerate
+                ? "bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 shadow-lg shadow-emerald-500/40 hover:shadow-emerald-500/60 hover:-translate-y-0.5"
+                : "bg-slate-800 text-slate-500 cursor-not-allowed"
+            )}
+          >
+            {generating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Üretiliyor…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                Mockup Üret
+                {selectedTemplateCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-md bg-white/15 text-[10px] tabular-nums">
+                    ×{selectedTemplateCount}
+                  </span>
+                )}
+                <span className="hidden sm:inline text-[10px] font-semibold bg-white/15 px-1.5 py-0.5 rounded-md uppercase tracking-wider">
+                  Ücretsiz
+                </span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Horizontally-scrolling row of folder chips that sit above the template
  *  grid. Each chip:

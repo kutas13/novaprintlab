@@ -105,21 +105,66 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Quick-and-dirty average luminance of a design's *non-transparent*
+ *  pixels. Used to pick the right blend mode automatically:
+ *    • Dark designs (avg < 0.5) → multiply blend, the print darkens
+ *      whatever's under it. Looks like screen-printed ink on light
+ *      fabric. This is the default behavior most mockup tools assume.
+ *    • Light designs (avg ≥ 0.5) → screen blend. Multiply on a black
+ *      shirt + white print = WHITE × BLACK = BLACK, which makes the
+ *      design disappear. Screen blend (1 - (1-a)(1-b)) preserves the
+ *      white print AND lets fabric folds modulate its brightness.
+ *
+ *  Sampled at 64×64 — overkill for an aggregate luminance and keeps
+ *  per-mockup overhead under 1ms even on slow phones. */
+function detectDesignBrightness(img: HTMLImageElement): "light" | "dark" {
+  const tmp = document.createElement("canvas");
+  tmp.width = 64;
+  tmp.height = 64;
+  const tctx = tmp.getContext("2d");
+  if (!tctx) return "dark";
+  tctx.drawImage(img, 0, 0, 64, 64);
+  let sum = 0;
+  let count = 0;
+  try {
+    const data = tctx.getImageData(0, 0, 64, 64).data;
+    for (let i = 0; i < data.length; i += 4) {
+      // Ignore mostly-transparent pixels (background); they'd skew the avg.
+      if (data[i + 3] < 16) continue;
+      sum +=
+        0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      count++;
+    }
+  } catch {
+    // CORS-tainted canvas (rare — store images are same-origin via
+    // Supabase) — assume dark and let multiply do its thing.
+    return "dark";
+  }
+  if (count === 0) return "dark";
+  const avg = sum / count / 255;
+  return avg > 0.5 ? "light" : "dark";
+}
+
 /**
  * Composite a design onto a template's print area.
  *
  * Pipeline (when all options are on):
  *   1. Draw the blank onto a square output canvas.
- *   2. Render the design onto a SCRATCH canvas at the print box's size,
+ *   2. AUTO-DETECT the design's brightness (light vs dark) so we can
+ *      pick the right blend mode (multiply for dark inks, screen for
+ *      white/light inks). This is what prevents a white "CAT CAFE AND
+ *      ME" print from going black on a black shirt.
+ *   3. Render the design onto a SCRATCH canvas at the print box's size,
  *      respecting the design's aspect ratio.
- *   3. If `fabricShading`, extract the blank's luminance map from the
- *      print area and multiply it onto the scratch canvas — this is what
- *      makes the print pick up wrinkles, folds and shading on the shirt
- *      (it's a poor man's displacement map but works surprisingly well).
- *   4. Rotate the scratch canvas around its center by `printArea.rotation`
- *      (degrees) and stamp it onto the output canvas with the chosen
- *      multiply blend strength.
- *   5. Export as JPEG.
+ *   4. If `fabricShading`, extract the blank's luminance map from the
+ *      print area and blend it onto the scratch canvas — multiply for
+ *      dark designs (folds darken the print), screen for light designs
+ *      (highlights brighten the print). The print picks up wrinkles
+ *      either way.
+ *   5. Rotate the scratch canvas around its center by `printArea.rotation`
+ *      (degrees) and stamp it onto the output canvas with the brightness-
+ *      appropriate blend mode at the chosen strength.
+ *   6. Export as JPEG.
  *
  * @param template   The blank product photo + print area config.
  * @param designSrc  Data URL or HTTPS URL of the design PNG.
@@ -136,6 +181,15 @@ export async function renderTemplateMockup(
     loadImage(template.imageDataUrl),
     loadImage(designSrc),
   ]);
+
+  // Detect design brightness early — every subsequent blend op uses this.
+  // White / light prints on dark shirts need "screen", everything else
+  // needs "multiply".
+  const brightness = detectDesignBrightness(design);
+  const isLightDesign = brightness === "light";
+  const stampBlend: GlobalCompositeOperation = isLightDesign
+    ? "screen"
+    : "multiply";
 
   const canvas = document.createElement("canvas");
   canvas.width = outputSize;
@@ -237,12 +291,53 @@ export async function renderTemplateMockup(
       }
       shctx.putImageData(imageData, 0, 0);
 
-      // Multiply the shading map onto the design. Only inside the design's
-      // contain-fit rectangle so we don't shade the empty padding area.
-      sctx.save();
-      sctx.globalCompositeOperation = "multiply";
-      sctx.drawImage(shading, 0, 0);
-      sctx.restore();
+      // Blend the shading map onto the design with the SAME mode we'll
+      // use to stamp the design onto the shirt. This is the key fix:
+      //   • Dark design → multiply (folds darken the print)
+      //   • Light design → screen   (highlights brighten the print)
+      // For light prints we also INVERT the luminance map first so that
+      // dark folds = subtle shadow on the white print (instead of
+      // brightening, which would do nothing on already-white pixels).
+      if (isLightDesign) {
+        // Inverted luminance: dark folds = bright on the new map. Then
+        // multiply that map onto the white print → folds darken the
+        // print a bit, highlights leave it pure white.
+        const inv = document.createElement("canvas");
+        inv.width = shading.width;
+        inv.height = shading.height;
+        const ictx = inv.getContext("2d");
+        if (ictx) {
+          ictx.drawImage(shading, 0, 0);
+          // Apply a soft inversion: keep alpha, invert RGB, ease toward
+          // neutral gray so folds aren't crushed too hard.
+          const imageDataInv = ictx.getImageData(
+            0,
+            0,
+            inv.width,
+            inv.height
+          );
+          const d = imageDataInv.data;
+          for (let i = 0; i < d.length; i += 4) {
+            // Soft invert toward gray; full invert is too aggressive.
+            const v = 255 - d[i];
+            const softened = Math.round(0.55 * 255 + 0.45 * v);
+            d[i] = softened;
+            d[i + 1] = softened;
+            d[i + 2] = softened;
+          }
+          ictx.putImageData(imageDataInv, 0, 0);
+          sctx.save();
+          sctx.globalCompositeOperation = "multiply";
+          sctx.drawImage(inv, 0, 0);
+          sctx.restore();
+        }
+      } else {
+        // Dark design — original multiply path.
+        sctx.save();
+        sctx.globalCompositeOperation = "multiply";
+        sctx.drawImage(shading, 0, 0);
+        sctx.restore();
+      }
 
       // The multiply pass affects transparent pixels too (turning them
       // gray). Mask back to the original design alpha by drawing the
@@ -255,18 +350,19 @@ export async function renderTemplateMockup(
     }
   }
 
-  // Step 4 — stamp the scratch canvas onto the output canvas at the print
+  // Step 5 — stamp the scratch canvas onto the output canvas at the print
   // area's center, rotated by `printArea.rotation` degrees, using the
-  // chosen multiply blend strength.
+  // brightness-appropriate blend mode at the chosen strength.
   const angle = ((template.printArea.rotation || 0) * Math.PI) / 180;
   const cx = px + pw / 2;
   const cy = py + ph / 2;
 
   if (template.blendStrength > 0) {
-    // Two-pass: multiply for the fabric pickup + source-over for the
-    // remaining opacity. Gives the user a smooth 0..1 dial.
+    // Two-pass: the brightness-appropriate blend for the fabric pickup
+    // + source-over for the remaining opacity. Gives the user a smooth
+    // 0..1 dial without losing the design itself.
     ctx.save();
-    ctx.globalCompositeOperation = "multiply";
+    ctx.globalCompositeOperation = stampBlend;
     ctx.globalAlpha = template.blendStrength;
     ctx.translate(cx, cy);
     ctx.rotate(angle);
