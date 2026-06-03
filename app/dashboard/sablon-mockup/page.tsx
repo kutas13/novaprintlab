@@ -106,10 +106,15 @@ export default function TemplateMockupPage() {
   }, [initStore]);
 
   // ─── DESIGN SELECTION ────────────────────────────────────────────────
+  // Mağaza listesi: sadece HENÜZ MOCKUP YAPILMAMIŞ tasarımları göster.
+  // Mockup'ı zaten olan tasarımları burada listelemek anlamsız — kullanıcı
+  // ikinci kez aynı tasarım için mockup üretmek istemez ve listeyi şişirip
+  // zor seçim yapmak istemez. Mockup'ı olanlar Taha sayfası ve Taslaklar
+  // sayfasında zaten görünür.
   const storeDesigns: DesignSource[] = useMemo(
     () =>
       designs
-        .filter((d) => d.originalImageUrl)
+        .filter((d) => d.originalImageUrl && d.mockups.length === 0)
         .map((d) => ({
           type: "store" as const,
           id: d.id,
@@ -264,9 +269,13 @@ export default function TemplateMockupPage() {
   }, [activeFolderId, loadingTemplates]);
 
   // ─── FOLDER ACTIONS ──────────────────────────────────────────────────
-  const createFolder = (name?: string) => {
-    const trimmed = (name || prompt("Klasör adı:") || "").trim();
-    if (!trimmed) return;
+  const createFolder = (name: string): boolean => {
+    const trimmed = name.trim();
+    if (!trimmed) return false;
+    if (folders.some((f) => f.name.toLowerCase() === trimmed.toLowerCase())) {
+      toast.error("Aynı isimde bir klasör zaten var.");
+      return false;
+    }
     const id = Math.random().toString(36).slice(2, 10);
     const color = FOLDER_COLORS[folders.length % FOLDER_COLORS.length];
     const next: TemplateFolder = {
@@ -278,16 +287,18 @@ export default function TemplateMockupPage() {
     setFolders((prev) => [...prev, next]);
     setActiveFolderId(id);
     toast.success(`'${next.name}' klasörü oluşturuldu`);
+    return true;
   };
 
-  const renameFolder = (id: string) => {
-    const f = folders.find((x) => x.id === id);
-    if (!f) return;
-    const name = prompt("Yeni klasör adı:", f.name);
-    if (!name) return;
+  const renameFolder = (id: string, name: string): boolean => {
+    const trimmed = name.trim();
+    if (!trimmed) return false;
     setFolders((prev) =>
-      prev.map((x) => (x.id === id ? { ...x, name: name.trim().slice(0, 40) } : x))
+      prev.map((x) =>
+        x.id === id ? { ...x, name: trimmed.slice(0, 40) } : x
+      )
     );
+    return true;
   };
 
   const deleteFolder = (id: string) => {
@@ -305,10 +316,26 @@ export default function TemplateMockupPage() {
     if (activeFolderId === id) setActiveFolderId(FOLDER_ALL);
   };
 
-  const moveTemplate = (templateId: string, folderId: string | null) => {
+  /** Move a SET of templates to a target folder. Used by drag-drop where
+   *  the user may have selected multiple templates and dragged any one
+   *  of them onto a chip. Empty set = no-op. */
+  const moveTemplatesTo = (ids: string[], folderId: string | null) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
     setTemplates((prev) =>
-      prev.map((t) => (t.id === templateId ? { ...t, folderId } : t))
+      prev.map((t) => (idSet.has(t.id) ? { ...t, folderId } : t))
     );
+    const folderName =
+      folderId === null
+        ? "Klasörsüz"
+        : folders.find((f) => f.id === folderId)?.name || "klasör";
+    toast.success(
+      `${ids.length} şablon '${folderName}' klasörüne taşındı`
+    );
+  };
+
+  const moveTemplate = (templateId: string, folderId: string | null) => {
+    moveTemplatesTo([templateId], folderId);
   };
 
   const handleTemplateUpload = async (files: FileList | null) => {
@@ -477,6 +504,35 @@ export default function TemplateMockupPage() {
     void idbDel(TEMPLATES_KEY);
   };
 
+  // ─── DRAG-DROP STATE ─────────────────────────────────────────────────
+  // When the user starts dragging a template card, we figure out which
+  // ids should be picked up: if the dragged template is one of the
+  // currently selected ones, we drag the WHOLE selection (so toplu
+  // taşıma works); otherwise we drag just the single template the user
+  // grabbed. The active "drop-target chip" id is tracked so we can
+  // visually highlight the chip the cursor is over.
+  const [draggingIds, setDraggingIds] = useState<string[] | null>(null);
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(
+    null
+  );
+
+  const handleDragStart = (templateId: string) => {
+    if (selectedTemplateIds.has(templateId) && selectedTemplateIds.size > 1) {
+      setDraggingIds(Array.from(selectedTemplateIds));
+    } else {
+      setDraggingIds([templateId]);
+    }
+  };
+  const handleDragEnd = () => {
+    setDraggingIds(null);
+    setDropTargetFolderId(null);
+  };
+  const handleDropToFolder = (folderId: string | null) => {
+    if (!draggingIds) return;
+    moveTemplatesTo(draggingIds, folderId);
+    handleDragEnd();
+  };
+
   // ─── DERIVED LISTS ───────────────────────────────────────────────────
   // Visible templates = those in the active folder filter.
   const visibleTemplates = useMemo(() => {
@@ -595,23 +651,14 @@ export default function TemplateMockupPage() {
             title="2. Şablonlarım"
             icon={<Package className="h-4 w-4 text-emerald-400" />}
             rightSlot={
-              <div className="flex items-center gap-2">
+              templates.length > 0 ? (
                 <button
-                  onClick={() => createFolder()}
-                  className="inline-flex items-center gap-1 text-[10.5px] text-emerald-300 hover:text-emerald-200 font-semibold"
-                  title="Yeni klasör oluştur"
+                  onClick={clearAll}
+                  className="text-[10px] text-slate-500 hover:text-rose-300"
                 >
-                  <FolderPlus className="h-3 w-3" /> Klasör
+                  Hepsini sil
                 </button>
-                {templates.length > 0 && (
-                  <button
-                    onClick={clearAll}
-                    className="text-[10px] text-slate-500 hover:text-rose-300"
-                  >
-                    Hepsini sil
-                  </button>
-                )}
-              </div>
+              ) : null
             }
           >
             {/* ─── FOLDER CHIPS ─── */}
@@ -622,7 +669,12 @@ export default function TemplateMockupPage() {
               onSelect={setActiveFolderId}
               onRename={renameFolder}
               onDelete={deleteFolder}
-              onCreate={() => createFolder()}
+              onCreate={createFolder}
+              dragging={draggingIds !== null}
+              draggingCount={draggingIds?.length || 0}
+              dropTargetFolderId={dropTargetFolderId}
+              onDropTargetChange={setDropTargetFolderId}
+              onDrop={handleDropToFolder}
             />
 
             <input
@@ -708,11 +760,22 @@ export default function TemplateMockupPage() {
                     tpl={tpl}
                     isSelected={selectedTemplateIds.has(tpl.id)}
                     isEditing={editingTemplate?.id === tpl.id}
+                    isDragging={draggingIds?.includes(tpl.id) || false}
                     folders={folders}
-                    onToggle={() => toggleTemplate(tpl.id)}
+                    // Single tap = both pick this template AND open its
+                    // editor on the right. That gives the user the
+                    // "tıklayınca sağ tarafta ayarlama gelsin" behavior
+                    // they wanted, while still letting them un-tap to
+                    // deselect.
+                    onToggle={() => {
+                      toggleTemplate(tpl.id);
+                      setEditingTemplate(tpl);
+                    }}
                     onEdit={() => setEditingTemplate(tpl)}
                     onDelete={() => deleteTemplate(tpl.id)}
                     onMove={(folderId) => moveTemplate(tpl.id, folderId)}
+                    onDragStart={() => handleDragStart(tpl.id)}
+                    onDragEnd={handleDragEnd}
                   />
                 ))}
               </div>
@@ -853,9 +916,18 @@ export default function TemplateMockupPage() {
 // ─── SUB-COMPONENTS ────────────────────────────────────────────────────────
 
 /** Horizontally-scrolling row of folder chips that sit above the template
- *  grid. Each chip filters the grid to just that folder. Long-press / hover
- *  reveals rename + delete actions (we use a 3-dot menu so it works on
- *  touch). Two sentinel chips are always present: "Tümü" and "Klasörsüz". */
+ *  grid. Each chip:
+ *    • filters the grid to just that folder (single click)
+ *    • accepts a drag-drop from a TemplateCard (the dragged template(s)
+ *      get moved into the chip's folder)
+ *    • exposes a 3-dot menu with Rename + Delete (for real folders only)
+ *
+ *  Two sentinel chips are always present: "Tümü" (no-op drop = clear
+ *  folder) and "Klasörsüz" (drop = clear folder).
+ *
+ *  Folder creation is INLINE: clicking "+ Klasör" swaps that button with
+ *  a tiny pill-shaped input. Enter to confirm, Esc / blur to cancel.
+ *  No native prompt() — that's what the user explicitly complained about. */
 function FolderChips({
   folders,
   counts,
@@ -864,16 +936,28 @@ function FolderChips({
   onRename,
   onDelete,
   onCreate,
+  dragging,
+  draggingCount,
+  dropTargetFolderId,
+  onDropTargetChange,
+  onDrop,
 }: {
   folders: TemplateFolder[];
   counts: Record<string, number>;
   activeFolderId: string;
   onSelect: (id: string) => void;
-  onRename: (id: string) => void;
+  onRename: (id: string, newName: string) => boolean;
   onDelete: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (name: string) => boolean;
+  dragging: boolean;
+  draggingCount: number;
+  dropTargetFolderId: string | null;
+  onDropTargetChange: (id: string | null) => void;
+  onDrop: (folderId: string | null) => void;
 }) {
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   // Click-outside to close the popover. We attach a single document
   // listener instead of one per chip to keep the DOM lean.
@@ -888,35 +972,82 @@ function FolderChips({
   }, [menuOpenFor]);
 
   return (
-    <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3 -mx-1 px-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:bg-slate-800 [&::-webkit-scrollbar-thumb]:rounded">
-      <FolderChip
+    <div
+      className={cn(
+        "relative flex items-center gap-1.5 overflow-x-auto pb-2 mb-3 -mx-1 px-1 transition-colors",
+        "[&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:bg-slate-800 [&::-webkit-scrollbar-thumb]:rounded",
+        dragging && "py-1.5"
+      )}
+    >
+      {/* "Tümü" — drop here = clear folder (uncategorize) */}
+      <DroppableFolderChip
         active={activeFolderId === FOLDER_ALL}
         label="Tümü"
         count={counts[FOLDER_ALL] || 0}
         onClick={() => onSelect(FOLDER_ALL)}
         color="#94a3b8"
         icon={<Layers className="h-3 w-3" />}
+        dropTargetActive={dropTargetFolderId === FOLDER_ALL}
+        onDragOver={() => onDropTargetChange(FOLDER_ALL)}
+        onDragLeave={() => onDropTargetChange(null)}
+        onDrop={() => onDrop(null)}
+        canAcceptDrop={dragging}
       />
-      <FolderChip
+      <DroppableFolderChip
         active={activeFolderId === FOLDER_UNCATEGORIZED}
         label="Klasörsüz"
         count={counts[FOLDER_UNCATEGORIZED] || 0}
         onClick={() => onSelect(FOLDER_UNCATEGORIZED)}
         color="#64748b"
         icon={<FolderOpen className="h-3 w-3" />}
+        dropTargetActive={dropTargetFolderId === FOLDER_UNCATEGORIZED}
+        onDragOver={() => onDropTargetChange(FOLDER_UNCATEGORIZED)}
+        onDragLeave={() => onDropTargetChange(null)}
+        onDrop={() => onDrop(null)}
+        canAcceptDrop={dragging}
       />
       {folders.map((f) => {
         const isActive = activeFolderId === f.id;
         const isMenuOpen = menuOpenFor === f.id;
+        const isRenaming = renamingId === f.id;
+        const isDropTarget = dropTargetFolderId === f.id;
+
+        if (isRenaming) {
+          return (
+            <InlineFolderInput
+              key={f.id}
+              initial={f.name}
+              color={f.color}
+              placeholder="Yeni ad…"
+              onSubmit={(name) => {
+                if (!name.trim()) {
+                  setRenamingId(null);
+                  return;
+                }
+                onRename(f.id, name);
+                setRenamingId(null);
+              }}
+              onCancel={() => setRenamingId(null)}
+            />
+          );
+        }
+
         return (
           <div key={f.id} className="relative shrink-0" data-folder-menu>
-            <FolderChip
+            <DroppableFolderChip
               active={isActive}
               label={f.name}
               count={counts[f.id] || 0}
               onClick={() => onSelect(f.id)}
               color={f.color}
-              icon={<FolderIcon className="h-3 w-3" fill={f.color} stroke="none" />}
+              icon={
+                <FolderIcon className="h-3 w-3" fill={f.color} stroke="none" />
+              }
+              dropTargetActive={isDropTarget}
+              onDragOver={() => onDropTargetChange(f.id)}
+              onDragLeave={() => onDropTargetChange(null)}
+              onDrop={() => onDrop(f.id)}
+              canAcceptDrop={dragging}
               trailing={
                 <button
                   onClick={(e) => {
@@ -931,11 +1062,11 @@ function FolderChips({
               }
             />
             {isMenuOpen && (
-              <div className="absolute top-full left-0 mt-1 z-30 min-w-[140px] rounded-lg border border-slate-700 bg-slate-900 shadow-elev-3 overflow-hidden">
+              <div className="absolute top-full left-0 mt-1 z-30 min-w-[150px] rounded-lg border border-slate-700 bg-slate-900 shadow-elev-3 overflow-hidden">
                 <button
                   onClick={() => {
                     setMenuOpenFor(null);
-                    onRename(f.id);
+                    setRenamingId(f.id);
                   }}
                   className="w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-2"
                 >
@@ -955,17 +1086,48 @@ function FolderChips({
           </div>
         );
       })}
-      <button
-        onClick={onCreate}
-        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-slate-700 hover:border-emerald-500/60 text-[11px] text-slate-400 hover:text-emerald-200 transition"
-      >
-        <FolderPlus className="h-3 w-3" /> Klasör
-      </button>
+
+      {/* Inline "+ Klasör" — either a button or, once tapped, a tiny
+          chip-sized input that submits on Enter and cancels on Esc/blur.
+          Replaces the native prompt() the user disliked. */}
+      {creating ? (
+        <InlineFolderInput
+          initial=""
+          color="#10b981"
+          placeholder="Klasör adı…"
+          onSubmit={(name) => {
+            if (name.trim()) {
+              const ok = onCreate(name);
+              if (ok) setCreating(false);
+            } else {
+              setCreating(false);
+            }
+          }}
+          onCancel={() => setCreating(false)}
+        />
+      ) : (
+        <button
+          onClick={() => setCreating(true)}
+          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-emerald-500/40 hover:border-emerald-400/80 bg-emerald-500/5 hover:bg-emerald-500/10 text-[11px] font-semibold text-emerald-300 hover:text-emerald-200 transition"
+        >
+          <FolderPlus className="h-3 w-3" /> Klasör
+        </button>
+      )}
+
+      {/* Drag-in-progress hint banner */}
+      {dragging && (
+        <span className="ml-auto shrink-0 text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-400/30 rounded-full px-2 py-0.5 animate-pulse">
+          {draggingCount} şablon sürükleniyor → klasöre bırak
+        </span>
+      )}
     </div>
   );
 }
 
-function FolderChip({
+/** A chip that's both clickable AND a valid HTML5 drop target. We split
+ *  this out so the static "Tümü" / "Klasörsüz" chips share the same
+ *  drag-aware visual treatment as the user-defined folder chips. */
+function DroppableFolderChip({
   active,
   label,
   count,
@@ -973,6 +1135,11 @@ function FolderChip({
   color,
   icon,
   trailing,
+  dropTargetActive,
+  canAcceptDrop,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: {
   active: boolean;
   label: string;
@@ -981,15 +1148,34 @@ function FolderChip({
   color: string;
   icon: React.ReactNode;
   trailing?: React.ReactNode;
+  dropTargetActive: boolean;
+  canAcceptDrop: boolean;
+  onDragOver: () => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
 }) {
   return (
     <button
       onClick={onClick}
+      onDragOver={(e) => {
+        if (!canAcceptDrop) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        onDragOver();
+      }}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => {
+        if (!canAcceptDrop) return;
+        e.preventDefault();
+        onDrop();
+      }}
       className={cn(
         "shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition border",
         active
           ? "text-white shadow-elev-1"
-          : "text-slate-300 hover:text-white border-slate-700 bg-slate-900/40"
+          : "text-slate-300 hover:text-white border-slate-700 bg-slate-900/40",
+        dropTargetActive &&
+          "ring-2 ring-amber-400 scale-110 shadow-lg shadow-amber-400/30"
       )}
       style={
         active
@@ -998,10 +1184,17 @@ function FolderChip({
               borderColor: `${color}80`,
               color: color,
             }
+          : dropTargetActive
+          ? {
+              backgroundColor: `${color}33`,
+              borderColor: color,
+            }
           : undefined
       }
     >
-      <span style={active ? { color } : undefined}>{icon}</span>
+      <span style={active || dropTargetActive ? { color } : undefined}>
+        {icon}
+      </span>
       <span>{label}</span>
       <span className="text-slate-500 font-normal">{count}</span>
       {trailing}
@@ -1009,26 +1202,86 @@ function FolderChip({
   );
 }
 
-/** Individual template thumbnail with select, edit, delete, and a folder-
- *  picker dropdown. */
+/** Pill-sized input used both for "create folder" and "rename folder".
+ *  Auto-focuses, commits on Enter, cancels on Escape OR on blur with an
+ *  empty value (a non-empty blur also commits — feels natural). */
+function InlineFolderInput({
+  initial,
+  color,
+  placeholder,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string;
+  color: string;
+  placeholder: string;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [val, setVal] = useState(initial);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit(val);
+      }}
+      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-slate-900 transition"
+      style={{
+        borderColor: `${color}80`,
+        boxShadow: `0 0 0 2px ${color}33`,
+      }}
+    >
+      <FolderPlus className="h-3 w-3" style={{ color }} />
+      <input
+        autoFocus
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={() => {
+          // Empty blur = cancel, non-empty blur = commit (so the user
+          // can tab away to confirm)
+          if (val.trim()) onSubmit(val);
+          else onCancel();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        placeholder={placeholder}
+        maxLength={40}
+        className="bg-transparent text-[11px] font-semibold text-slate-100 placeholder:text-slate-500 outline-none min-w-[100px] max-w-[160px]"
+      />
+    </form>
+  );
+}
+
+/** Individual template thumbnail with select, edit, delete, drag-to-folder,
+ *  and a folder-picker dropdown. */
 function TemplateCard({
   tpl,
   isSelected,
   isEditing,
+  isDragging,
   folders,
   onToggle,
   onEdit,
   onDelete,
   onMove,
+  onDragStart,
+  onDragEnd,
 }: {
   tpl: MockupTemplate;
   isSelected: boolean;
   isEditing: boolean;
+  isDragging: boolean;
   folders: TemplateFolder[];
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onMove: (folderId: string | null) => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -1045,14 +1298,26 @@ function TemplateCard({
   const currentFolder = folders.find((f) => f.id === tpl.folderId);
 
   return (
-    <div className="relative group" data-tpl-menu>
+    <div
+      className="relative group"
+      data-tpl-menu
+      draggable
+      onDragStart={(e) => {
+        // setData is required for Firefox to fire dragover/drop events.
+        e.dataTransfer.setData("text/plain", tpl.id);
+        e.dataTransfer.effectAllowed = "move";
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+    >
       <button
         onClick={onToggle}
         className={cn(
-          "w-full aspect-square rounded-lg overflow-hidden border-2 transition-all relative",
+          "w-full aspect-square rounded-lg overflow-hidden border-2 transition-all relative cursor-grab active:cursor-grabbing",
           isSelected
             ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-elev-1"
-            : "border-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100"
+            : "border-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100",
+          isDragging && "opacity-30 scale-95"
         )}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
