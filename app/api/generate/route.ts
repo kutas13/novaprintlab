@@ -28,6 +28,11 @@ interface RequestBody {
   quality?: "low" | "medium" | "high"; // image-gen quality, default medium
   referenceImageDataUrl?: string; // optional inspiration image (base64 data url)
   referenceStrength?: "subtle" | "balanced" | "strong"; // how much DNA leaks
+  /** When true, we render the SAME concept twice — once in pure black ink
+   *  for light apparel, once in pure white ink for dark apparel — and
+   *  return both in the response. Costs 2× a single image but Etsy POD
+   *  sellers usually want both variants anyway. */
+  pairBlackAndWhite?: boolean;
 }
 
 // ─── STYLE ENGINE ───────────────────────────────────────────────────────────
@@ -577,8 +582,12 @@ export async function POST(req: Request) {
     // ─── Daily $5 cap — reserve before calling OpenAI image gen ────────
     const quality = normalizeQuality(body.quality);
     const cost = costForQuality(quality);
+    const pair = Boolean(body.pairBlackAndWhite);
+    // Pair mode = 2 images = 2× cost. Reserve up front so we don't blow
+    // the cap if only the first image succeeds.
+    const totalCost = pair ? cost * 2 : cost;
 
-    const reservation = await reserve("design", cost);
+    const reservation = await reserve("design", totalCost);
     if (!reservation.ok) {
       return NextResponse.json(
         {
@@ -590,11 +599,48 @@ export async function POST(req: Request) {
       );
     }
 
+    // POD-style monochrome lock that we APPEND to the base prompt for
+    // the BW pair. The base concept stays identical → both versions
+    // share subject, layout, typography, and composition; they differ
+    // ONLY in ink color, which is exactly what the user asked for
+    // ("tasarım aynı olacak").
+    const blackLock = ` MONOCHROMATIC SOLID BLACK INK ONLY: render the entire artwork using ONLY pure black shapes and lines on a transparent background. NO colors, NO grayscale gradients, NO white fills — only flat 100% black ink suitable for screen-printing on LIGHT / WHITE apparel. Treat it like a one-color screen-print plate.`;
+    const whiteLock = ` MONOCHROMATIC SOLID WHITE INK ONLY: render the entire artwork using ONLY pure white shapes and lines on a transparent background. NO colors, NO grayscale gradients, NO black fills — only flat 100% white ink suitable for screen-printing on DARK / BLACK apparel. Treat it like a one-color screen-print plate.`;
+
+    if (pair) {
+      // Run both renders in parallel — gpt-image-1 is rate-limited per
+      // image, not per concurrent request, so this halves wall-clock time.
+      let blackUrl: string;
+      let whiteUrl: string;
+      try {
+        [blackUrl, whiteUrl] = await Promise.all([
+          generateImage(openai, englishPrompt + blackLock, quality),
+          generateImage(openai, englishPrompt + whiteLock, quality),
+        ]);
+      } catch (e) {
+        await refund("design", totalCost);
+        throw e;
+      }
+      return NextResponse.json({
+        ok: true,
+        concept,
+        englishPrompt,
+        pair: {
+          black: { imageDataUrl: blackUrl, suffixLabel: "Siyah (açık ürünlere)" },
+          white: { imageDataUrl: whiteUrl, suffixLabel: "Beyaz (koyu ürünlere)" },
+        },
+        quality,
+        cost: totalCost,
+        usage: reservation.snapshot,
+        referenceDNA: referenceDNA || undefined,
+      });
+    }
+
     let imageDataUrl: string;
     try {
       imageDataUrl = await generateImage(openai, englishPrompt, quality);
     } catch (e) {
-      await refund("design", cost);
+      await refund("design", totalCost);
       throw e;
     }
 

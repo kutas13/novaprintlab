@@ -204,6 +204,11 @@ export default function OlusturPage() {
   const [placement, setPlacement] = useState<string>("Ortalanmış");
   const [preset, setPreset] = useState<string>("");
   const [quality, setQuality] = useState<"low" | "medium" | "high">("low");
+  /** When true, the API renders the same concept twice — pure-black for
+   *  light apparel + pure-white for dark apparel. Both versions land in
+   *  history and can be approved independently. Costs 2× a single render
+   *  so we surface that in the button label. */
+  const [pairBlackAndWhite, setPairBlackAndWhite] = useState(false);
 
   // Reference image (optional inspiration / visual DNA)
   const [referenceImage, setReferenceImage] = useState<{
@@ -371,6 +376,7 @@ export default function OlusturPage() {
           quality,
           referenceImageDataUrl: referenceImage?.dataUrl,
           referenceStrength: referenceImage ? referenceStrength : undefined,
+          pairBlackAndWhite,
         }),
       });
       const json = await res.json();
@@ -381,9 +387,54 @@ export default function OlusturPage() {
       if (!res.ok || !json.ok) {
         throw new Error(json.error || "Tasarım üretilemedi.");
       }
+
+      const basePrompt = prompt.trim();
+
+      // PAIR response — backend returned two images. We add both to
+      // history (white first because dark-shirt mockups dominate Etsy
+      // sales, then black) and show the white one in the main preview.
+      if (json.pair) {
+        const blackItem: GeneratedDesign = {
+          id: uid(),
+          prompt: `${basePrompt} — Siyah (açık ürünlere)`,
+          englishPrompt: json.englishPrompt + " [BLACK INK]",
+          concept: json.concept,
+          imageDataUrl: json.pair.black.imageDataUrl,
+          styles: selectedStyles.length > 0 ? selectedStyles : undefined,
+          color: "Siyah",
+          type: type || undefined,
+          placement: placement || undefined,
+          preset: preset || undefined,
+          createdAt: Date.now(),
+        };
+        const whiteItem: GeneratedDesign = {
+          id: uid(),
+          prompt: `${basePrompt} — Beyaz (koyu ürünlere)`,
+          englishPrompt: json.englishPrompt + " [WHITE INK]",
+          concept: json.concept,
+          imageDataUrl: json.pair.white.imageDataUrl,
+          styles: selectedStyles.length > 0 ? selectedStyles : undefined,
+          color: "Beyaz",
+          type: type || undefined,
+          placement: placement || undefined,
+          preset: preset || undefined,
+          // +1ms so React keys & timeline order stay distinct from black
+          createdAt: Date.now() + 1,
+        };
+        // Preview the BLACK first (most-used variant for white shirts).
+        setResult(blackItem);
+        const next = [whiteItem, blackItem, ...history].slice(0, HISTORY_LIMIT);
+        persistHistory(next);
+        toast.success(
+          "İki versiyon üretildi: siyah (açık ürünlere) + beyaz (koyu ürünlere)",
+          { duration: 6000 }
+        );
+        return;
+      }
+
       const item: GeneratedDesign = {
         id: uid(),
-        prompt: prompt.trim(),
+        prompt: basePrompt,
         englishPrompt: json.englishPrompt,
         concept: json.concept,
         imageDataUrl: json.imageDataUrl,
@@ -972,6 +1023,52 @@ export default function OlusturPage() {
             </div>
           </div>
 
+          {/* Black + White pair toggle. POD sellers usually need both
+              versions so they can list the same design on light AND dark
+              apparel. Costs 2× a single render because we make 2 API
+              calls. */}
+          <label
+            className={cn(
+              "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all",
+              pairBlackAndWhite
+                ? "border-amber-400/50 bg-gradient-to-br from-amber-500/[0.08] to-yellow-500/[0.04] shadow-elev-1"
+                : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={pairBlackAndWhite}
+              onChange={(e) => setPairBlackAndWhite(e.target.checked)}
+              disabled={generating}
+              className="mt-0.5 accent-amber-500 cursor-pointer h-4 w-4"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="flex h-5 items-center gap-1 px-2 rounded-full bg-amber-500/15 text-amber-200 text-[10px] font-bold uppercase tracking-wider border border-amber-400/30">
+                  POD
+                </span>
+                <p className="text-sm font-bold text-slate-100">
+                  Hem siyah hem beyaz versiyon üret
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                Aynı tasarımı{" "}
+                <span className="text-slate-200 font-semibold">
+                  iki ayrı dosya
+                </span>{" "}
+                olarak alırsın:{" "}
+                <span className="bg-white text-slate-900 px-1 rounded text-[10px] font-bold">
+                  siyah
+                </span>{" "}
+                açık ürünlere,{" "}
+                <span className="bg-slate-900 text-white px-1 rounded text-[10px] font-bold border border-slate-700">
+                  beyaz
+                </span>{" "}
+                koyu ürünlere. Maliyet 2× tek render.
+              </p>
+            </div>
+          </label>
+
           {/* Generate */}
           <Button
             onClick={handleGenerate}
@@ -982,12 +1079,16 @@ export default function OlusturPage() {
             {generating ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
-                Tasarım Üretiliyor… (~30s)
+                {pairBlackAndWhite
+                  ? "İki versiyon üretiliyor… (~60s)"
+                  : "Tasarım Üretiliyor… (~30s)"}
               </>
             ) : (
               <>
                 <Sparkles className="h-5 w-5" />
-                Tasarım Oluştur
+                {pairBlackAndWhite
+                  ? "Siyah + Beyaz Üret (2× maliyet)"
+                  : "Tasarım Oluştur"}
               </>
             )}
           </Button>

@@ -36,9 +36,18 @@ import {
   DEFAULT_PRINT_AREA,
   downscaleImage,
   renderTemplateMockup,
+  FOLDER_COLORS,
   type MockupTemplate,
   type PrintArea,
+  type TemplateFolder,
 } from "@/lib/template-mockup";
+import {
+  FolderPlus,
+  Folder as FolderIcon,
+  FolderOpen,
+  MoreVertical,
+  Pencil,
+} from "lucide-react";
 
 // ────────────────────────────────────────────────────────────────────────────
 // ŞABLON MOCKUP — AI-FREE MOCKUP STUDIO
@@ -59,6 +68,14 @@ import {
 // ────────────────────────────────────────────────────────────────────────────
 
 const TEMPLATES_KEY = "novaprintlab.templates.v1";
+const FOLDERS_KEY = "novaprintlab.folders.v1";
+const EDITING_KEY = "novaprintlab.editingTemplateId.v1";
+const ACTIVE_FOLDER_KEY = "novaprintlab.activeFolderId.v1";
+
+/** Sentinel folder IDs used by the filter chips. They never appear on
+ *  templates themselves — only as the page's `activeFolderId` state.    */
+const FOLDER_ALL = "__all__";
+const FOLDER_UNCATEGORIZED = "__uncategorized__";
 
 type DesignSource =
   | { type: "store"; id: string; imageUrl: string; prompt?: string }
@@ -135,6 +152,8 @@ export default function TemplateMockupPage() {
 
   // ─── TEMPLATE LIBRARY ────────────────────────────────────────────────
   const [templates, setTemplates] = useState<MockupTemplate[]>([]);
+  const [folders, setFolders] = useState<TemplateFolder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<string>(FOLDER_ALL);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(
     new Set()
@@ -144,33 +163,67 @@ export default function TemplateMockupPage() {
   );
   const templateFileRef = useRef<HTMLInputElement>(null);
 
-  // Load templates from IndexedDB on mount
+  // ─── LOAD ALL PERSISTED STATE ON MOUNT ───────────────────────────────
+  // Templates + folders + the editor's open template + the active folder
+  // chip all live in IndexedDB so the workspace survives a page refresh
+  // or a navigation away-and-back. Previously the editor was killed on
+  // every nav, which is exactly the bug the user reported.
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const stored = await idbGet<MockupTemplate[]>(TEMPLATES_KEY);
-        if (alive && stored) {
-          // Migration: templates persisted before we added `rotation` and
-          // `fabricShading` won't have those fields. Backfill with safe
-          // defaults so the renderer doesn't read `undefined`.
-          const migrated = stored.map((t) => ({
-            ...t,
-            printArea: {
-              x: t.printArea?.x ?? 0.32,
-              y: t.printArea?.y ?? 0.26,
-              w: t.printArea?.w ?? 0.36,
-              h: t.printArea?.h ?? 0.33,
-              rotation: t.printArea?.rotation ?? 0,
-            },
-            fabricShading: t.fabricShading ?? true,
-            blendStrength: t.blendStrength ?? 0.85,
-          }));
-          setTemplates(migrated);
-          // Select all by default — the user usually wants every template
-          // to participate in every render run.
-          setSelectedTemplateIds(new Set(migrated.map((t) => t.id)));
+        const [stored, storedFolders, storedEditingId, storedActiveFolder] =
+          await Promise.all([
+            idbGet<MockupTemplate[]>(TEMPLATES_KEY),
+            idbGet<TemplateFolder[]>(FOLDERS_KEY),
+            idbGet<string>(EDITING_KEY),
+            idbGet<string>(ACTIVE_FOLDER_KEY),
+          ]);
+        if (!alive) return;
+
+        // Migration: templates persisted before we added `rotation`,
+        // `fabricShading`, `folderId` won't have those fields. Backfill
+        // with safe defaults so the renderer doesn't read `undefined`.
+        const migrated = (stored ?? []).map((t) => ({
+          ...t,
+          folderId: t.folderId ?? null,
+          printArea: {
+            x: t.printArea?.x ?? 0.32,
+            y: t.printArea?.y ?? 0.26,
+            w: t.printArea?.w ?? 0.36,
+            h: t.printArea?.h ?? 0.33,
+            rotation: t.printArea?.rotation ?? 0,
+          },
+          fabricShading: t.fabricShading ?? true,
+          blendStrength: t.blendStrength ?? 0.85,
+        }));
+        setTemplates(migrated);
+        setFolders(storedFolders ?? []);
+
+        // Restore the editor's open template if it still exists. Without
+        // this, the user loses their print-area panel every time they
+        // navigate away (Yusuf reported "yatay dikey ayarlama yeri gidiyor
+        // gelmiyor").
+        if (storedEditingId) {
+          const found = migrated.find((t) => t.id === storedEditingId);
+          if (found) setEditingTemplate(found);
         }
+
+        // Restore last active folder chip if it still exists. Fall back
+        // to "Tümü" if the user deleted the folder while we were gone.
+        if (
+          storedActiveFolder &&
+          (storedActiveFolder === FOLDER_ALL ||
+            storedActiveFolder === FOLDER_UNCATEGORIZED ||
+            (storedFolders ?? []).some((f) => f.id === storedActiveFolder))
+        ) {
+          setActiveFolderId(storedActiveFolder);
+        }
+
+        // NOTE: We intentionally DO NOT auto-select all templates here.
+        // The user complained that the auto-selection forced them to
+        // un-tick every template before generating with just one. Start
+        // empty; let the user pick.
       } catch (e) {
         console.error("[templates] load failed:", e);
       } finally {
@@ -187,6 +240,76 @@ export default function TemplateMockupPage() {
     if (loadingTemplates) return;
     void idbSet(TEMPLATES_KEY, templates);
   }, [templates, loadingTemplates]);
+
+  // Persist folders
+  useEffect(() => {
+    if (loadingTemplates) return;
+    void idbSet(FOLDERS_KEY, folders);
+  }, [folders, loadingTemplates]);
+
+  // Persist which template is currently being edited
+  useEffect(() => {
+    if (loadingTemplates) return;
+    if (editingTemplate) {
+      void idbSet(EDITING_KEY, editingTemplate.id);
+    } else {
+      void idbDel(EDITING_KEY);
+    }
+  }, [editingTemplate?.id, loadingTemplates]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist the active folder chip
+  useEffect(() => {
+    if (loadingTemplates) return;
+    void idbSet(ACTIVE_FOLDER_KEY, activeFolderId);
+  }, [activeFolderId, loadingTemplates]);
+
+  // ─── FOLDER ACTIONS ──────────────────────────────────────────────────
+  const createFolder = (name?: string) => {
+    const trimmed = (name || prompt("Klasör adı:") || "").trim();
+    if (!trimmed) return;
+    const id = Math.random().toString(36).slice(2, 10);
+    const color = FOLDER_COLORS[folders.length % FOLDER_COLORS.length];
+    const next: TemplateFolder = {
+      id,
+      name: trimmed.slice(0, 40),
+      color,
+      createdAt: Date.now(),
+    };
+    setFolders((prev) => [...prev, next]);
+    setActiveFolderId(id);
+    toast.success(`'${next.name}' klasörü oluşturuldu`);
+  };
+
+  const renameFolder = (id: string) => {
+    const f = folders.find((x) => x.id === id);
+    if (!f) return;
+    const name = prompt("Yeni klasör adı:", f.name);
+    if (!name) return;
+    setFolders((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, name: name.trim().slice(0, 40) } : x))
+    );
+  };
+
+  const deleteFolder = (id: string) => {
+    const f = folders.find((x) => x.id === id);
+    if (!f) return;
+    const count = templates.filter((t) => t.folderId === id).length;
+    const msg = count
+      ? `'${f.name}' klasörünü sil? İçindeki ${count} şablon "Klasörsüz"e taşınacak.`
+      : `'${f.name}' klasörünü sil?`;
+    if (!confirm(msg)) return;
+    setFolders((prev) => prev.filter((x) => x.id !== id));
+    setTemplates((prev) =>
+      prev.map((t) => (t.folderId === id ? { ...t, folderId: null } : t))
+    );
+    if (activeFolderId === id) setActiveFolderId(FOLDER_ALL);
+  };
+
+  const moveTemplate = (templateId: string, folderId: string | null) => {
+    setTemplates((prev) =>
+      prev.map((t) => (t.id === templateId ? { ...t, folderId } : t))
+    );
+  };
 
   const handleTemplateUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -213,15 +336,22 @@ export default function TemplateMockupPage() {
       }
     }
     if (added.length > 0) {
-      setTemplates((prev) => [...added, ...prev]);
-      setSelectedTemplateIds(
-        (prev) => new Set([...added.map((t) => t.id), ...Array.from(prev)])
-      );
-      toast.success(`${added.length} şablon eklendi`);
+      // Auto-assign newly uploaded templates to the active folder so the
+      // user doesn't have to manually file every blank they upload while
+      // a folder is open.
+      const targetFolderId =
+        activeFolderId !== FOLDER_ALL && activeFolderId !== FOLDER_UNCATEGORIZED
+          ? activeFolderId
+          : null;
+      const tagged = added.map((t) => ({ ...t, folderId: targetFolderId }));
+      setTemplates((prev) => [...tagged, ...prev]);
+      // NOTE: do NOT auto-select; the user wants to pick which templates
+      // to include in each generation run themselves.
+      toast.success(`${tagged.length} şablon eklendi`);
       // Auto-open editor for the first new template so the user can mark
       // the print area immediately. Otherwise the default area lands in
       // the middle of the photo which might or might not be the chest.
-      if (added[0]) setEditingTemplate(added[0]);
+      if (tagged[0]) setEditingTemplate(tagged[0]);
     }
   };
 
@@ -347,6 +477,44 @@ export default function TemplateMockupPage() {
     void idbDel(TEMPLATES_KEY);
   };
 
+  // ─── DERIVED LISTS ───────────────────────────────────────────────────
+  // Visible templates = those in the active folder filter.
+  const visibleTemplates = useMemo(() => {
+    if (activeFolderId === FOLDER_ALL) return templates;
+    if (activeFolderId === FOLDER_UNCATEGORIZED)
+      return templates.filter((t) => !t.folderId);
+    return templates.filter((t) => t.folderId === activeFolderId);
+  }, [templates, activeFolderId]);
+
+  // Counts per folder for the chip badges
+  const folderCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      [FOLDER_ALL]: templates.length,
+      [FOLDER_UNCATEGORIZED]: templates.filter((t) => !t.folderId).length,
+    };
+    folders.forEach((f) => {
+      counts[f.id] = templates.filter((t) => t.folderId === f.id).length;
+    });
+    return counts;
+  }, [templates, folders]);
+
+  // "Select all visible" — only toggles templates the user can actually see
+  const allVisibleSelected =
+    visibleTemplates.length > 0 &&
+    visibleTemplates.every((t) => selectedTemplateIds.has(t.id));
+
+  const toggleSelectAllVisible = () => {
+    setSelectedTemplateIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleTemplates.forEach((t) => next.delete(t.id));
+      } else {
+        visibleTemplates.forEach((t) => next.add(t.id));
+      }
+      return next;
+    });
+  };
+
   // ─── RENDER ──────────────────────────────────────────────────────────
   const totalRenders = selectedTemplateIds.size;
 
@@ -427,16 +595,36 @@ export default function TemplateMockupPage() {
             title="2. Şablonlarım"
             icon={<Package className="h-4 w-4 text-emerald-400" />}
             rightSlot={
-              templates.length > 0 ? (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={clearAll}
-                  className="text-[10px] text-slate-500 hover:text-rose-300"
+                  onClick={() => createFolder()}
+                  className="inline-flex items-center gap-1 text-[10.5px] text-emerald-300 hover:text-emerald-200 font-semibold"
+                  title="Yeni klasör oluştur"
                 >
-                  Hepsini sil
+                  <FolderPlus className="h-3 w-3" /> Klasör
                 </button>
-              ) : null
+                {templates.length > 0 && (
+                  <button
+                    onClick={clearAll}
+                    className="text-[10px] text-slate-500 hover:text-rose-300"
+                  >
+                    Hepsini sil
+                  </button>
+                )}
+              </div>
             }
           >
+            {/* ─── FOLDER CHIPS ─── */}
+            <FolderChips
+              folders={folders}
+              counts={folderCounts}
+              activeFolderId={activeFolderId}
+              onSelect={setActiveFolderId}
+              onRename={renameFolder}
+              onDelete={deleteFolder}
+              onCreate={() => createFolder()}
+            />
+
             <input
               type="file"
               ref={templateFileRef}
@@ -454,109 +642,87 @@ export default function TemplateMockupPage() {
             >
               <Plus className="h-5 w-5" />
               <span className="text-xs font-semibold">
-                Blank Ürün Fotoğrafı Yükle
+                {activeFolderId !== FOLDER_ALL &&
+                activeFolderId !== FOLDER_UNCATEGORIZED
+                  ? `'${folders.find((f) => f.id === activeFolderId)?.name}' klasörüne yükle`
+                  : "Blank Ürün Fotoğrafı Yükle"}
               </span>
               <span className="text-[10px] text-slate-500">
                 T-shirt, hoodie, sweatshirt — herhangi bir blank ürün PNG/JPG
               </span>
             </button>
 
+            {/* Select-all toggle (only shown when there's something to act on) */}
+            {visibleTemplates.length > 0 && (
+              <div className="flex items-center justify-between mb-2 px-1">
+                <button
+                  onClick={toggleSelectAllVisible}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 hover:text-emerald-200"
+                >
+                  <span
+                    className={cn(
+                      "h-4 w-4 rounded border flex items-center justify-center transition",
+                      allVisibleSelected
+                        ? "bg-emerald-500 border-emerald-500"
+                        : "border-slate-600 bg-slate-900"
+                    )}
+                  >
+                    {allVisibleSelected && (
+                      <CheckCircle2 className="h-3 w-3 text-white" />
+                    )}
+                  </span>
+                  {allVisibleSelected
+                    ? "Seçimi kaldır"
+                    : "Görünenleri seç"}
+                </button>
+                <span className="text-[10px] text-slate-500">
+                  {selectedTemplateIds.size} / {visibleTemplates.length} seçili
+                </span>
+              </div>
+            )}
+
             {loadingTemplates ? (
               <div className="text-center text-xs text-slate-500 py-4">
                 <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
                 Şablonlar yükleniyor…
               </div>
-            ) : templates.length === 0 ? (
+            ) : visibleTemplates.length === 0 ? (
               <div className="text-center py-6 px-3 rounded-xl bg-slate-950/40 border border-slate-800/50">
                 <Package className="h-8 w-8 mx-auto mb-2 text-slate-700" />
                 <p className="text-xs text-slate-400 mb-1">
-                  Henüz şablon eklenmemiş
+                  {templates.length === 0
+                    ? "Henüz şablon eklenmemiş"
+                    : "Bu klasör boş"}
                 </p>
                 <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Yukarıdaki butona basıp Etsy'de bulduğun veya kendi çektiğin
-                  blank ürün fotoğraflarını yükle. Her şablon bir kere yüklenir,
-                  sürekli kullanılır.
+                  {templates.length === 0
+                    ? "Yukarıdaki butona basıp Etsy'de bulduğun veya kendi çektiğin blank ürün fotoğraflarını yükle. Her şablon bir kere yüklenir, sürekli kullanılır."
+                    : "Bu klasöre şablon ekle veya başka bir klasör seç."}
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {templates.map((tpl) => {
-                  const isSelected = selectedTemplateIds.has(tpl.id);
-                  const isEditing = editingTemplate?.id === tpl.id;
-                  return (
-                    <div key={tpl.id} className="relative group">
-                      <button
-                        onClick={() => toggleTemplate(tpl.id)}
-                        className={cn(
-                          "w-full aspect-square rounded-lg overflow-hidden border-2 transition-all relative",
-                          isSelected
-                            ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-elev-1"
-                            : "border-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100"
-                        )}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={tpl.imageDataUrl}
-                          alt={tpl.label}
-                          className="w-full h-full object-cover"
-                        />
-                        {/* Print area overlay — rotated to match the
-                            slider so the gallery thumbnail also previews
-                            tilt without having to open the editor. */}
-                        <div
-                          className="absolute border-2 border-rose-500/80 pointer-events-none"
-                          style={{
-                            left: `${tpl.printArea.x * 100}%`,
-                            top: `${tpl.printArea.y * 100}%`,
-                            width: `${tpl.printArea.w * 100}%`,
-                            height: `${tpl.printArea.h * 100}%`,
-                            transform: `rotate(${tpl.printArea.rotation || 0}deg)`,
-                            transformOrigin: "center center",
-                          }}
-                        />
-                        {isSelected && (
-                          <div className="absolute top-1 right-1 bg-emerald-500 rounded-full p-0.5">
-                            <CheckCircle2 className="h-3 w-3 text-white" />
-                          </div>
-                        )}
-                      </button>
-                      <div className="flex items-center justify-between mt-1">
-                        <p
-                          className="text-[10px] text-slate-400 truncate flex-1"
-                          title={tpl.label}
-                        >
-                          {tpl.label}
-                        </p>
-                        <div className="flex gap-0.5">
-                          <button
-                            onClick={() => setEditingTemplate(tpl)}
-                            className={cn(
-                              "p-0.5 rounded hover:bg-slate-800",
-                              isEditing && "bg-blue-500/20 text-blue-300"
-                            )}
-                            title="Print area düzenle"
-                          >
-                            <Eye className="h-3 w-3 text-slate-400 hover:text-blue-300" />
-                          </button>
-                          <button
-                            onClick={() => deleteTemplate(tpl.id)}
-                            className="p-0.5 rounded hover:bg-rose-500/20"
-                            title="Sil"
-                          >
-                            <Trash2 className="h-3 w-3 text-slate-400 hover:text-rose-300" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {visibleTemplates.map((tpl) => (
+                  <TemplateCard
+                    key={tpl.id}
+                    tpl={tpl}
+                    isSelected={selectedTemplateIds.has(tpl.id)}
+                    isEditing={editingTemplate?.id === tpl.id}
+                    folders={folders}
+                    onToggle={() => toggleTemplate(tpl.id)}
+                    onEdit={() => setEditingTemplate(tpl)}
+                    onDelete={() => deleteTemplate(tpl.id)}
+                    onMove={(folderId) => moveTemplate(tpl.id, folderId)}
+                  />
+                ))}
               </div>
             )}
 
-            {templates.length > 0 && (
+            {visibleTemplates.length > 0 && (
               <p className="text-[10.5px] text-slate-500 mt-3 flex items-center gap-1.5">
                 <AlertCircle className="h-3 w-3" />
-                Kırmızı kutu = print bölgesi. Düzenlemek için göz ikonuna tıkla.
+                Pembe kutu = print bölgesi. Düzenlemek için göz ikonuna, klasör
+                taşımak için 3-nokta menüsüne tıkla.
               </p>
             )}
           </Section>
@@ -685,6 +851,342 @@ export default function TemplateMockupPage() {
 }
 
 // ─── SUB-COMPONENTS ────────────────────────────────────────────────────────
+
+/** Horizontally-scrolling row of folder chips that sit above the template
+ *  grid. Each chip filters the grid to just that folder. Long-press / hover
+ *  reveals rename + delete actions (we use a 3-dot menu so it works on
+ *  touch). Two sentinel chips are always present: "Tümü" and "Klasörsüz". */
+function FolderChips({
+  folders,
+  counts,
+  activeFolderId,
+  onSelect,
+  onRename,
+  onDelete,
+  onCreate,
+}: {
+  folders: TemplateFolder[];
+  counts: Record<string, number>;
+  activeFolderId: string;
+  onSelect: (id: string) => void;
+  onRename: (id: string) => void;
+  onDelete: (id: string) => void;
+  onCreate: () => void;
+}) {
+  const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+
+  // Click-outside to close the popover. We attach a single document
+  // listener instead of one per chip to keep the DOM lean.
+  useEffect(() => {
+    if (!menuOpenFor) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-folder-menu]")) setMenuOpenFor(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpenFor]);
+
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3 -mx-1 px-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:bg-slate-800 [&::-webkit-scrollbar-thumb]:rounded">
+      <FolderChip
+        active={activeFolderId === FOLDER_ALL}
+        label="Tümü"
+        count={counts[FOLDER_ALL] || 0}
+        onClick={() => onSelect(FOLDER_ALL)}
+        color="#94a3b8"
+        icon={<Layers className="h-3 w-3" />}
+      />
+      <FolderChip
+        active={activeFolderId === FOLDER_UNCATEGORIZED}
+        label="Klasörsüz"
+        count={counts[FOLDER_UNCATEGORIZED] || 0}
+        onClick={() => onSelect(FOLDER_UNCATEGORIZED)}
+        color="#64748b"
+        icon={<FolderOpen className="h-3 w-3" />}
+      />
+      {folders.map((f) => {
+        const isActive = activeFolderId === f.id;
+        const isMenuOpen = menuOpenFor === f.id;
+        return (
+          <div key={f.id} className="relative shrink-0" data-folder-menu>
+            <FolderChip
+              active={isActive}
+              label={f.name}
+              count={counts[f.id] || 0}
+              onClick={() => onSelect(f.id)}
+              color={f.color}
+              icon={<FolderIcon className="h-3 w-3" fill={f.color} stroke="none" />}
+              trailing={
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpenFor(isMenuOpen ? null : f.id);
+                  }}
+                  className="ml-1 p-0.5 rounded hover:bg-slate-700/60"
+                  title="Klasör menüsü"
+                >
+                  <MoreVertical className="h-3 w-3 text-slate-400" />
+                </button>
+              }
+            />
+            {isMenuOpen && (
+              <div className="absolute top-full left-0 mt-1 z-30 min-w-[140px] rounded-lg border border-slate-700 bg-slate-900 shadow-elev-3 overflow-hidden">
+                <button
+                  onClick={() => {
+                    setMenuOpenFor(null);
+                    onRename(f.id);
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-2"
+                >
+                  <Pencil className="h-3 w-3" /> Yeniden adlandır
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpenFor(null);
+                    onDelete(f.id);
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-rose-300 hover:bg-rose-500/10 flex items-center gap-2"
+                >
+                  <Trash2 className="h-3 w-3" /> Klasörü sil
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button
+        onClick={onCreate}
+        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-slate-700 hover:border-emerald-500/60 text-[11px] text-slate-400 hover:text-emerald-200 transition"
+      >
+        <FolderPlus className="h-3 w-3" /> Klasör
+      </button>
+    </div>
+  );
+}
+
+function FolderChip({
+  active,
+  label,
+  count,
+  onClick,
+  color,
+  icon,
+  trailing,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  onClick: () => void;
+  color: string;
+  icon: React.ReactNode;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition border",
+        active
+          ? "text-white shadow-elev-1"
+          : "text-slate-300 hover:text-white border-slate-700 bg-slate-900/40"
+      )}
+      style={
+        active
+          ? {
+              backgroundColor: `${color}22`,
+              borderColor: `${color}80`,
+              color: color,
+            }
+          : undefined
+      }
+    >
+      <span style={active ? { color } : undefined}>{icon}</span>
+      <span>{label}</span>
+      <span className="text-slate-500 font-normal">{count}</span>
+      {trailing}
+    </button>
+  );
+}
+
+/** Individual template thumbnail with select, edit, delete, and a folder-
+ *  picker dropdown. */
+function TemplateCard({
+  tpl,
+  isSelected,
+  isEditing,
+  folders,
+  onToggle,
+  onEdit,
+  onDelete,
+  onMove,
+}: {
+  tpl: MockupTemplate;
+  isSelected: boolean;
+  isEditing: boolean;
+  folders: TemplateFolder[];
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMove: (folderId: string | null) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-tpl-menu]")) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpen]);
+
+  const currentFolder = folders.find((f) => f.id === tpl.folderId);
+
+  return (
+    <div className="relative group" data-tpl-menu>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full aspect-square rounded-lg overflow-hidden border-2 transition-all relative",
+          isSelected
+            ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-elev-1"
+            : "border-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100"
+        )}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={tpl.imageDataUrl}
+          alt={tpl.label}
+          className="w-full h-full object-cover"
+        />
+        {/* Print area overlay — rotated to match the slider so the
+            gallery thumbnail also previews tilt without having to open
+            the editor. */}
+        <div
+          className="absolute border-2 border-rose-500/80 pointer-events-none"
+          style={{
+            left: `${tpl.printArea.x * 100}%`,
+            top: `${tpl.printArea.y * 100}%`,
+            width: `${tpl.printArea.w * 100}%`,
+            height: `${tpl.printArea.h * 100}%`,
+            transform: `rotate(${tpl.printArea.rotation || 0}deg)`,
+            transformOrigin: "center center",
+          }}
+        />
+        {isSelected && (
+          <div className="absolute top-1 right-1 bg-emerald-500 rounded-full p-0.5">
+            <CheckCircle2 className="h-3 w-3 text-white" />
+          </div>
+        )}
+        {currentFolder && (
+          <div
+            className="absolute top-1 left-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider backdrop-blur-sm"
+            style={{
+              backgroundColor: `${currentFolder.color}cc`,
+              color: "white",
+            }}
+            title={currentFolder.name}
+          >
+            {currentFolder.name.slice(0, 8)}
+          </div>
+        )}
+      </button>
+      <div className="flex items-center justify-between mt-1 gap-0.5">
+        <p
+          className="text-[10px] text-slate-400 truncate flex-1"
+          title={tpl.label}
+        >
+          {tpl.label}
+        </p>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          className={cn(
+            "p-0.5 rounded hover:bg-slate-800",
+            isEditing && "bg-blue-500/20 text-blue-300"
+          )}
+          title="Print area düzenle"
+        >
+          <Eye className="h-3 w-3 text-slate-400 hover:text-blue-300" />
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen((v) => !v);
+          }}
+          className="p-0.5 rounded hover:bg-slate-800"
+          title="Daha fazla"
+        >
+          <MoreVertical className="h-3 w-3 text-slate-400 hover:text-slate-200" />
+        </button>
+      </div>
+
+      {menuOpen && (
+        <div className="absolute top-full right-0 mt-1 z-30 min-w-[180px] rounded-lg border border-slate-700 bg-slate-900 shadow-elev-3 overflow-hidden">
+          <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500 bg-slate-950/60 border-b border-slate-800">
+            Klasöre Taşı
+          </div>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              onMove(null);
+            }}
+            className={cn(
+              "w-full px-3 py-1.5 text-left text-xs hover:bg-slate-800 flex items-center gap-2",
+              !tpl.folderId ? "text-emerald-200" : "text-slate-300"
+            )}
+          >
+            <FolderOpen className="h-3 w-3" /> Klasörsüz
+            {!tpl.folderId && (
+              <CheckCircle2 className="h-3 w-3 ml-auto text-emerald-400" />
+            )}
+          </button>
+          {folders.map((f) => {
+            const isCurrent = tpl.folderId === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onMove(f.id);
+                }}
+                className={cn(
+                  "w-full px-3 py-1.5 text-left text-xs hover:bg-slate-800 flex items-center gap-2",
+                  isCurrent ? "text-emerald-200" : "text-slate-300"
+                )}
+              >
+                <FolderIcon
+                  className="h-3 w-3"
+                  fill={f.color}
+                  stroke="none"
+                />
+                {f.name}
+                {isCurrent && (
+                  <CheckCircle2 className="h-3 w-3 ml-auto text-emerald-400" />
+                )}
+              </button>
+            );
+          })}
+          <div className="border-t border-slate-800">
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                onDelete();
+              }}
+              className="w-full px-3 py-1.5 text-left text-xs text-rose-300 hover:bg-rose-500/10 flex items-center gap-2"
+            >
+              <Trash2 className="h-3 w-3" /> Şablonu Sil
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Section({
   title,

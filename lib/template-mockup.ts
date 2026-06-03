@@ -38,6 +38,9 @@ export interface MockupTemplate {
   productType?: string;
   /** Optional dominant color for grouping in the library. */
   color?: string;
+  /** Optional folder ID this template belongs to. `null` / `undefined`
+   *  means "uncategorized" (shows up in the "Klasörsüz" filter). */
+  folderId?: string | null;
   /** Base64 data URL of the blank product photo the user uploaded. */
   imageDataUrl: string;
   /** Where to place the design on the blank. */
@@ -54,6 +57,30 @@ export interface MockupTemplate {
   fabricShading: boolean;
   createdAt: number;
 }
+
+/** A user-defined folder for organising templates ("Tişört Erkek",
+ *  "Hoodie Kadın", "Outlet Yaz" etc.). Stored alongside templates in
+ *  IndexedDB. */
+export interface TemplateFolder {
+  id: string;
+  name: string;
+  /** Hex color for the chip ("#10b981"). Auto-assigned from a palette
+   *  if the user doesn't pick one. */
+  color: string;
+  createdAt: number;
+}
+
+/** Pre-defined chip colors we cycle through when creating folders. */
+export const FOLDER_COLORS = [
+  "#10b981", // emerald
+  "#3b82f6", // blue
+  "#a855f7", // purple
+  "#ec4899", // pink
+  "#f97316", // orange
+  "#eab308", // amber
+  "#06b6d4", // cyan
+  "#f43f5e", // rose
+] as const;
 
 export const DEFAULT_PRINT_AREA: PrintArea = {
   x: 0.32,
