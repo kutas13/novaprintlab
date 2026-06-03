@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TahaDialog } from "@/components/taha-dialog";
+import { MockupDownloadButton } from "@/components/mockup-download-button";
 import { useDesignStore } from "@/lib/store";
 import type { Design } from "@/lib/types";
 import { format } from "date-fns";
@@ -105,11 +106,11 @@ export default function TahaPage() {
           {counts.queue} bekleyen
         </Badge>
         <Link
-          href="/dashboard/mockup"
-          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 hover:from-blue-400 hover:to-violet-400 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg shadow-blue-500/20 transition-all hover:-translate-y-0.5"
+          href="/dashboard/sablon-mockup"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5"
         >
           <Sparkles className="h-3.5 w-3.5" />
-          AI Mockup Stüdyosu
+          Mockup Stüdyosu
         </Link>
       </PageHeader>
 
@@ -314,9 +315,20 @@ function TahaWorkflowCard({
   const hasMockup = design.mockups.length > 0;
 
   return (
-    <button
+    // We use a div + role="button" instead of a real <button> so we can
+    // nest the ZIP-download button inside without HTML violating the
+    // "no interactive elements inside an interactive element" rule.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className="group relative overflow-hidden rounded-2xl border border-slate-800/70 bg-gradient-to-br from-slate-900/70 to-slate-900/30 backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-slate-700 hover:shadow-elev-3 text-left flex flex-col"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="group relative overflow-hidden rounded-2xl border border-slate-800/70 bg-gradient-to-br from-slate-900/70 to-slate-900/30 backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-slate-700 hover:shadow-elev-3 text-left flex flex-col cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
     >
       <div className="relative aspect-[4/3] checkerboard overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -347,10 +359,20 @@ function TahaWorkflowCard({
           )}
         </div>
 
-        {/* Mockup count */}
+        {/* Mockup count + ZIP download (only when mockups are present) */}
         {hasMockup && (
-          <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-sm text-[10px] font-bold text-slate-200">
-            {design.mockups.length} mockup
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+            <span className="px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-sm text-[10px] font-bold text-slate-200">
+              {design.mockups.length} mockup
+            </span>
+            {/* ZIP download — wrapped in a span so the click never bubbles
+                into the parent card's onClick (which opens the dialog). */}
+            <span
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <MockupDownloadButton design={design} variant="icon" />
+            </span>
           </div>
         )}
 
@@ -400,7 +422,7 @@ function TahaWorkflowCard({
           </span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 

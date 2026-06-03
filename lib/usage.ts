@@ -1,6 +1,6 @@
 // ────────────────────────────────────────────────────────────────────────────
 // NOVAPRINTLAB — DAILY OPENAI USAGE TRACKER
-// Server-only helpers. Imported by route handlers (/api/mockup, /api/generate)
+// Server-only helpers. Imported by /api/generate and /api/generate-seo
 // to enforce a per-day spend cap. Uses Supabase `api_usage` table created by
 // `supabase-usage-setup.sql`.
 //

@@ -50,16 +50,9 @@ const NAV: NavItem[] = [
     group: "main",
   },
   {
-    label: "AI Mockup Stüdyosu",
-    href: "/dashboard/mockup",
-    icon: Layers,
-    accent: "from-blue-500 to-violet-600",
-    group: "main",
-  },
-  {
-    label: "Şablon Mockup",
+    label: "Mockup Stüdyosu",
     href: "/dashboard/sablon-mockup",
-    icon: Package,
+    icon: Layers,
     accent: "from-emerald-500 to-teal-500",
     group: "main",
   },

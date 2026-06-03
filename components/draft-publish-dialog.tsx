@@ -29,6 +29,7 @@ import type { Design, PricingData } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
 import { DesignActions } from "@/components/design-actions";
 import { EtsyAttributesPanel } from "@/components/etsy-attributes-panel";
+import { MockupDownloadButton } from "@/components/mockup-download-button";
 
 export function DraftPublishDialog({
   design,
@@ -208,6 +209,9 @@ export function DraftPublishDialog({
                     ? `${total} bitmiş mockup`
                     : "Taha henüz mockup yüklemedi"}
                 </div>
+                {total > 0 && (
+                  <MockupDownloadButton design={current} variant="full" />
+                )}
               </div>
             </div>
 

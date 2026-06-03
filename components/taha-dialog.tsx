@@ -28,6 +28,7 @@ import type { Design } from "@/lib/types";
 import { copyToClipboard, cn } from "@/lib/utils";
 import { DesignActions } from "@/components/design-actions";
 import { EtsyAttributesPanel } from "@/components/etsy-attributes-panel";
+import { MockupDownloadButton } from "@/components/mockup-download-button";
 
 export function TahaDialog({
   design,
@@ -223,32 +224,35 @@ export function TahaDialog({
               </div>
 
               {current.mockups.length > 0 && (
-                <div className="grid grid-cols-3 gap-2">
-                  {current.mockups.map((m, i) => (
-                    <div
-                      key={m.path}
-                      className="relative aspect-square rounded-lg overflow-hidden bg-slate-950 border border-slate-800 group/mock"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={m.url}
-                        alt={`mockup ${i + 1}`}
-                        loading="lazy"
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => handleRemoveMockup(m.path)}
-                        disabled={busy !== null}
-                        className="absolute top-1 right-1 h-6 w-6 rounded-md bg-slate-950/80 hover:bg-red-500/90 border border-slate-700 flex items-center justify-center disabled:opacity-50 opacity-0 group-hover/mock:opacity-100 transition-opacity"
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {current.mockups.map((m, i) => (
+                      <div
+                        key={m.path}
+                        className="relative aspect-square rounded-lg overflow-hidden bg-slate-950 border border-slate-800 group/mock"
                       >
-                        <X className="h-3 w-3" />
-                      </button>
-                      <span className="absolute bottom-1 left-1 text-[10px] font-semibold bg-slate-950/80 text-slate-300 rounded px-1.5 py-0.5">
-                        #{i + 1}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={m.url}
+                          alt={`mockup ${i + 1}`}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          onClick={() => handleRemoveMockup(m.path)}
+                          disabled={busy !== null}
+                          className="absolute top-1 right-1 h-6 w-6 rounded-md bg-slate-950/80 hover:bg-red-500/90 border border-slate-700 flex items-center justify-center disabled:opacity-50 opacity-0 group-hover/mock:opacity-100 transition-opacity"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        <span className="absolute bottom-1 left-1 text-[10px] font-semibold bg-slate-950/80 text-slate-300 rounded px-1.5 py-0.5">
+                          #{i + 1}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <MockupDownloadButton design={current} variant="full" />
+                </>
               )}
 
               {busy === "upload" ? (

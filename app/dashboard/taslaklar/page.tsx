@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header";
 import { DesignCard } from "@/components/design-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MockupDownloadButton } from "@/components/mockup-download-button";
 import { useDesignStore } from "@/lib/store";
 import type { Design } from "@/lib/types";
 import { DraftPublishDialog } from "@/components/draft-publish-dialog";
@@ -110,6 +111,12 @@ export default function TaslaklarPage() {
                   • {d.mockups.length} mockup
                 </span>
               </div>
+              {/* ZIP download — only when mockups exist. Sits between
+                  the metadata row and the publish CTA so the seller can
+                  grab the assets before/after publishing. */}
+              {d.mockups.length > 0 && (
+                <MockupDownloadButton design={d} variant="compact" className="w-full" />
+              )}
               <Button
                 onClick={(e) => quickPublish(d, e)}
                 disabled={quickPublishing === d.id}

@@ -151,10 +151,25 @@ export default function TemplateMockupPage() {
       try {
         const stored = await idbGet<MockupTemplate[]>(TEMPLATES_KEY);
         if (alive && stored) {
-          setTemplates(stored);
+          // Migration: templates persisted before we added `rotation` and
+          // `fabricShading` won't have those fields. Backfill with safe
+          // defaults so the renderer doesn't read `undefined`.
+          const migrated = stored.map((t) => ({
+            ...t,
+            printArea: {
+              x: t.printArea?.x ?? 0.32,
+              y: t.printArea?.y ?? 0.26,
+              w: t.printArea?.w ?? 0.36,
+              h: t.printArea?.h ?? 0.33,
+              rotation: t.printArea?.rotation ?? 0,
+            },
+            fabricShading: t.fabricShading ?? true,
+            blendStrength: t.blendStrength ?? 0.85,
+          }));
+          setTemplates(migrated);
           // Select all by default — the user usually wants every template
           // to participate in every render run.
-          setSelectedTemplateIds(new Set(stored.map((t) => t.id)));
+          setSelectedTemplateIds(new Set(migrated.map((t) => t.id)));
         }
       } catch (e) {
         console.error("[templates] load failed:", e);
@@ -189,6 +204,7 @@ export default function TemplateMockupPage() {
           imageDataUrl: dataUrl,
           printArea: { ...DEFAULT_PRINT_AREA },
           blendStrength: 0.85,
+          fabricShading: true,
           createdAt: Date.now(),
         };
         added.push(tpl);
@@ -909,30 +925,78 @@ function PrintAreaEditor({
             taşı, sağ alttaki noktayı sürükleyerek boyutlandır. Veya aşağıdan
             yüzde değerlerini gir.
           </p>
-          <Field
-            label="X (sol kenar)"
-            value={template.printArea.x * 100}
-            onChange={(v) => setField("x", v)}
-          />
-          <Field
-            label="Y (üst kenar)"
-            value={template.printArea.y * 100}
-            onChange={(v) => setField("y", v)}
-          />
-          <Field
-            label="Genişlik"
-            value={template.printArea.w * 100}
-            onChange={(v) => setField("w", v)}
-          />
-          <Field
-            label="Yükseklik"
-            value={template.printArea.h * 100}
-            onChange={(v) => setField("h", v)}
-          />
+          <div className="grid grid-cols-2 gap-2">
+            <Field
+              label="X (sol)"
+              value={template.printArea.x * 100}
+              onChange={(v) => setField("x", v)}
+            />
+            <Field
+              label="Y (üst)"
+              value={template.printArea.y * 100}
+              onChange={(v) => setField("y", v)}
+            />
+            <Field
+              label="Genişlik"
+              value={template.printArea.w * 100}
+              onChange={(v) => setField("w", v)}
+            />
+            <Field
+              label="Yükseklik"
+              value={template.printArea.h * 100}
+              onChange={(v) => setField("h", v)}
+            />
+          </div>
 
+          {/* Rotation — fixes mockups where the shirt is hung slightly tilted */}
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-              Kumaşa Yapışma (multiply blend)
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex justify-between mb-1">
+              <span>Eğim / Rotasyon</span>
+              <span className="text-rose-300">
+                {(template.printArea.rotation || 0).toFixed(1)}°
+              </span>
+            </label>
+            <input
+              type="range"
+              min={-30}
+              max={30}
+              step={0.5}
+              value={template.printArea.rotation || 0}
+              onChange={(e) =>
+                onChange({
+                  printArea: {
+                    ...template.printArea,
+                    rotation: parseFloat(e.target.value),
+                  },
+                })
+              }
+              className="w-full accent-rose-500"
+            />
+            <div className="flex justify-between text-[9px] text-slate-500 mt-0.5">
+              <span>← Sola</span>
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    printArea: { ...template.printArea, rotation: 0 },
+                  })
+                }
+                className="text-slate-400 hover:text-rose-300 underline"
+              >
+                Sıfırla
+              </button>
+              <span>Sağa →</span>
+            </div>
+          </div>
+
+          {/* Multiply blend strength — overall how much the design picks up
+              the shirt's color & shadows */}
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex justify-between mb-1">
+              <span>Yapışma Şiddeti</span>
+              <span className="text-emerald-300">
+                {Math.round(template.blendStrength * 100)}%
+              </span>
             </label>
             <input
               type="range"
@@ -945,10 +1009,31 @@ function PrintAreaEditor({
               className="w-full accent-emerald-500"
             />
             <p className="text-[10px] text-slate-500 mt-0.5">
-              {Math.round(template.blendStrength * 100)}% · Yüksek =
-              gerçekçi gömlek görünümü
+              Yüksek = tasarım gömleğin rengiyle karışır
             </p>
           </div>
+
+          {/* Fabric shading — stamps the blank's wrinkles/folds onto the
+              design so it doesn't look pasted on */}
+          <label className="flex items-start gap-2 cursor-pointer p-2 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-emerald-500/40 transition">
+            <input
+              type="checkbox"
+              checked={template.fabricShading ?? true}
+              onChange={(e) =>
+                onChange({ fabricShading: e.target.checked })
+              }
+              className="mt-0.5 accent-emerald-500 cursor-pointer"
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-semibold text-slate-200">
+                Kumaş Kıvrım Takibi
+              </p>
+              <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                Tişört kırışıksa tasarım da o kıvrımları takip eder. Düz
+                tişörtte fark yok.
+              </p>
+            </div>
+          </label>
 
           <div className="pt-2">
             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">

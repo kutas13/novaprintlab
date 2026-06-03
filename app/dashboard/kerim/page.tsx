@@ -76,7 +76,7 @@ export default function KerimPage() {
     <div>
       <PageHeader
         title="SEO Komuta Merkezi"
-        description="Yusuf'un yüklediği tasarımlara AI ile Etsy uyumlu başlık, açıklama ve 13 etiket üret."
+        description="Yusuf'un yüklediği tasarımlara GPT-5 ile Etsy 2026 SEO uyumlu başlık, ~2.5K karakter emoji‑zengin açıklama ve 13 long‑tail etiket üret."
         icon={<Sparkles className="h-5 w-5" />}
         accent="from-violet-500 to-fuchsia-500"
       >
@@ -289,7 +289,7 @@ function NextUpCard({
               className="w-full sm:w-auto"
             >
               <Wand2 className="h-4 w-4" />
-              AI ile SEO Üret
+              GPT-5 ile SEO Üret
               <ArrowRight className="h-4 w-4" />
             </Button>
           </div>
@@ -405,7 +405,7 @@ function SeoDialog({
         toast.error(json.error || "AI çağrısı başarısız.");
         return;
       }
-      const { data } = json as { data: SeoData };
+      const { data } = json as { data: SeoData & { model?: string } };
       setTitle(data.title);
       setDescription(data.description);
       const next = [...data.tags];
@@ -419,7 +419,10 @@ function SeoDialog({
           graphic: data.attributes.graphic ?? "",
         });
       }
-      toast.success("AI içerik üretildi. Kontrol edip kaydedebilirsin.");
+      const modelLabel = data.model
+        ? data.model.toUpperCase().replace(/^GPT-/, "GPT-")
+        : "AI";
+      toast.success(`${modelLabel} ile içerik üretildi. Kontrol edip kaydedebilirsin.`);
     } catch {
       toast.error("AI isteği gönderilemedi.");
     } finally {
@@ -485,16 +488,17 @@ function SeoDialog({
             >
               {generating ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Görsel analiz ediliyor…
+                  <Loader2 className="h-4 w-4 animate-spin" /> GPT-5 görseli analiz ediyor…
                 </>
               ) : (
                 <>
-                  <Wand2 className="h-4 w-4" /> Görseli AI ile Analiz Et & SEO Üret
+                  <Wand2 className="h-4 w-4" /> GPT-5 ile Analiz Et & SEO Üret
                 </>
               )}
             </Button>
             <p className="text-[11px] text-slate-500 -mt-2">
-              AI tasarımın görselini analiz edip Etsy&apos;ye optimize İngilizce başlık, açıklama ve 13 etiket üretir.
+              GPT-5 tasarımı analiz edip Etsy 2026 SEO kurallarına göre başlık,
+              ~2.5K karakterlik emoji‑zengin açıklama ve 13 long‑tail etiket üretir.
             </p>
 
             <div className="space-y-2">
