@@ -340,18 +340,16 @@ export async function renderTemplateMockup(
       //                       screen-print look)
       //   • Light design    → inverted luminance × multiply (folds
       //                       subtly darken white ink so it looks 3D)
-      //   • Colorful design → soft multiply at low alpha (preserves
-      //                       colors but lets the fabric folds modulate
-      //                       brightness a bit — without this the print
-      //                       looks like a flat sticker)
+      //   • Colorful design → SKIP entirely. Any multiply blend
+      //                       desaturates the colors (the user called
+      //                       this "soluk" — washed out). DTG and
+      //                       Etsy-style mockups for colorful prints
+      //                       use a sticker-style flat overlay anyway,
+      //                       so we let the print stay vivid and rely
+      //                       on the natural shadows from the photo
+      //                       beneath it.
       if (isColorfulDesign) {
-        // Soft fabric pickup — multiply at half alpha so colors are
-        // mostly preserved but folds still read.
-        sctx.save();
-        sctx.globalCompositeOperation = "multiply";
-        sctx.globalAlpha = 0.45;
-        sctx.drawImage(shading, 0, 0);
-        sctx.restore();
+        // intentionally no shading — keep colors saturated
       } else if (isLightDesign) {
         // Inverted luminance: dark folds = bright on the new map. Then
         // multiply that map onto the white print → folds darken the
