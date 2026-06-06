@@ -892,6 +892,13 @@ export default function TemplateMockupPage() {
               template={editingTemplate}
               onChange={(patch) => updateTemplate(editingTemplate.id, patch)}
               onClose={() => setEditingTemplate(null)}
+              designPreviewSrc={
+                selectedDesign
+                  ? selectedDesign.type === "store"
+                    ? selectedDesign.imageUrl
+                    : selectedDesign.imageDataUrl
+                  : null
+              }
             />
           ) : null}
 
@@ -2032,10 +2039,18 @@ function PrintAreaEditor({
   template,
   onChange,
   onClose,
+  designPreviewSrc,
 }: {
   template: MockupTemplate;
   onChange: (patch: Partial<MockupTemplate>) => void;
   onClose: () => void;
+  /** Optional design image (data URL or remote URL) overlaid inside the
+   *  pink print-area box. Gives the user a live "this is what it'll look
+   *  like" preview while they drag/resize/rotate. Not pixel-faithful to
+   *  the final mockup (we skip the blend-mode/fabric-shading pipeline
+   *  for performance — those need a canvas pass), but the SIZE and
+   *  POSITION are exact. */
+  designPreviewSrc?: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<
@@ -2135,7 +2150,16 @@ function PrintAreaEditor({
               `willChange: transform` keeps the rotation buttery smooth
               even while the user is dragging the slider quickly. */}
           <div
-            className="absolute border-2 border-rose-400 bg-rose-500/10 cursor-move"
+            className={cn(
+              "absolute border-2 cursor-move",
+              // When a design preview is loaded, fade the box's pink
+              // tint right down so it doesn't muddy the artwork. Keep
+              // the dashed border bright so the bounds are still
+              // obvious.
+              designPreviewSrc
+                ? "border-rose-400/80 bg-transparent"
+                : "border-rose-400 bg-rose-500/10"
+            )}
             style={{
               left: `${template.printArea.x * 100}%`,
               top: `${template.printArea.y * 100}%`,
@@ -2148,8 +2172,29 @@ function PrintAreaEditor({
             }}
             onPointerDown={(e) => handlePointerDown(e, "move")}
           >
-            <div className="absolute -top-5 left-0 text-[10px] font-bold uppercase tracking-wider text-rose-300 bg-slate-900/80 px-1.5 py-0.5 rounded whitespace-nowrap">
-              Print Bölgesi
+            {/* LIVE DESIGN PREVIEW — sits inside the print box, rotates
+                with it (because its parent has the rotate transform),
+                and scales with object-contain. Pointer-events disabled
+                so the user can still drag the box from anywhere. */}
+            {designPreviewSrc && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={designPreviewSrc}
+                alt="Tasarım önizleme"
+                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                draggable={false}
+                style={{
+                  // Match the renderer's blendStrength so the preview
+                  // gives a hint of "how strong" the print will look.
+                  // We can't faithfully simulate multiply/screen blends
+                  // in CSS without a canvas pass, but opacity is the
+                  // most-noticed parameter so we honor it.
+                  opacity: Math.max(0.6, template.blendStrength),
+                }}
+              />
+            )}
+            <div className="absolute -top-5 left-0 text-[10px] font-bold uppercase tracking-wider text-rose-300 bg-slate-900/90 px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
+              {designPreviewSrc ? "Önizleme" : "Print Bölgesi"}
               {Math.abs(template.printArea.rotation || 0) > 0.1 && (
                 <span className="ml-1 text-rose-200">
                   · {(template.printArea.rotation || 0).toFixed(1)}°
@@ -2158,7 +2203,7 @@ function PrintAreaEditor({
             </div>
             {/* resize handle bottom-right */}
             <div
-              className="absolute -right-2 -bottom-2 w-4 h-4 rounded-full bg-rose-500 border-2 border-slate-900 cursor-se-resize shadow-lg hover:scale-110 transition"
+              className="absolute -right-2 -bottom-2 w-4 h-4 rounded-full bg-rose-500 border-2 border-slate-900 cursor-se-resize shadow-lg hover:scale-110 transition z-10"
               onPointerDown={(e) => handlePointerDown(e, "resize")}
               title="Boyutlandır"
             />
