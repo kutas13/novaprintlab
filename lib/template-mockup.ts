@@ -105,44 +105,77 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Quick-and-dirty average luminance of a design's *non-transparent*
- *  pixels. Used to pick the right blend mode automatically:
- *    • Dark designs (avg < 0.5) → multiply blend, the print darkens
- *      whatever's under it. Looks like screen-printed ink on light
- *      fabric. This is the default behavior most mockup tools assume.
- *    • Light designs (avg ≥ 0.5) → screen blend. Multiply on a black
- *      shirt + white print = WHITE × BLACK = BLACK, which makes the
- *      design disappear. Screen blend (1 - (1-a)(1-b)) preserves the
- *      white print AND lets fabric folds modulate its brightness.
+/** Classify a design into one of 3 buckets so the renderer can pick the
+ *  blend mode that won't destroy it:
  *
- *  Sampled at 64×64 — overkill for an aggregate luminance and keeps
- *  per-mockup overhead under 1ms even on slow phones. */
-function detectDesignBrightness(img: HTMLImageElement): "light" | "dark" {
+ *    • "dark"     — mostly black/very dark, low saturation. Think a
+ *                   monochrome line-art print. → use **multiply**, the
+ *                   ink darkens the (light) fabric below; on dark
+ *                   fabric the print stays invisible (which is what
+ *                   you'd want anyway for an all-black print on black).
+ *    • "light"    — mostly white/very light, low saturation. Think a
+ *                   white-ink slogan. → use **screen**; multiply would
+ *                   crush it to black on dark shirts.
+ *    • "colorful" — anything in between: a colorful logo, photographic
+ *                   print, multi-color illustration. → use **source-
+ *                   over** (a.k.a. normal). Both multiply and screen
+ *                   wreck colorful prints on contrasting fabrics
+ *                   (multiply turns a colorful logo into a black blob
+ *                   on a black shirt — exactly the bug the user
+ *                   reported with the snowboarder/skier logo).
+ *
+ *  Sampling: 96×96 thumbnail of the *opaque* pixels only. Pixel
+ *  categories: dark (lum < 0.22), light (lum > 0.78), mid otherwise.
+ *  Saturation = (max-min)/max of the RGB channels. A design is "dark"
+ *  iff ≥75% of pixels are dark AND average saturation is low; same
+ *  shape for "light". Otherwise colorful.
+ *
+ *  ~0.5ms per call on a desktop, never blocks rendering. */
+function classifyDesign(
+  img: HTMLImageElement
+): "dark" | "light" | "colorful" {
   const tmp = document.createElement("canvas");
-  tmp.width = 64;
-  tmp.height = 64;
+  tmp.width = 96;
+  tmp.height = 96;
   const tctx = tmp.getContext("2d");
-  if (!tctx) return "dark";
-  tctx.drawImage(img, 0, 0, 64, 64);
-  let sum = 0;
-  let count = 0;
+  if (!tctx) return "colorful";
+  tctx.drawImage(img, 0, 0, 96, 96);
+
+  let dark = 0;
+  let light = 0;
+  let total = 0;
+  let satSum = 0;
+
   try {
-    const data = tctx.getImageData(0, 0, 64, 64).data;
+    const data = tctx.getImageData(0, 0, 96, 96).data;
     for (let i = 0; i < data.length; i += 4) {
-      // Ignore mostly-transparent pixels (background); they'd skew the avg.
-      if (data[i + 3] < 16) continue;
-      sum +=
-        0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-      count++;
+      if (data[i + 3] < 16) continue; // skip transparent
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const sat = max === 0 ? 0 : (max - min) / max;
+      if (lum < 0.22) dark++;
+      else if (lum > 0.78) light++;
+      satSum += sat;
+      total++;
     }
   } catch {
-    // CORS-tainted canvas (rare — store images are same-origin via
-    // Supabase) — assume dark and let multiply do its thing.
-    return "dark";
+    // CORS-tainted canvas — fall through to "colorful" (safest blend).
+    return "colorful";
   }
-  if (count === 0) return "dark";
-  const avg = sum / count / 255;
-  return avg > 0.5 ? "light" : "dark";
+
+  if (total === 0) return "colorful";
+  const darkRatio = dark / total;
+  const lightRatio = light / total;
+  const avgSat = satSum / total;
+
+  // Low-saturation + heavily one-sided = treat as monochrome ink.
+  if (darkRatio >= 0.75 && avgSat < 0.18) return "dark";
+  if (lightRatio >= 0.75 && avgSat < 0.18) return "light";
+  return "colorful";
 }
 
 /**
@@ -182,14 +215,24 @@ export async function renderTemplateMockup(
     loadImage(designSrc),
   ]);
 
-  // Detect design brightness early — every subsequent blend op uses this.
-  // White / light prints on dark shirts need "screen", everything else
-  // needs "multiply".
-  const brightness = detectDesignBrightness(design);
-  const isLightDesign = brightness === "light";
-  const stampBlend: GlobalCompositeOperation = isLightDesign
-    ? "screen"
-    : "multiply";
+  // Detect design type early — every subsequent blend op uses this.
+  // The classification picks the only blend mode that doesn't destroy
+  // the print on a worst-case fabric color:
+  //   • dark  → multiply (black ink darkens fabric beneath)
+  //   • light → screen   (white ink survives on dark shirts)
+  //   • colorful → source-over (colorful prints would be crushed to
+  //                black by multiply on dark shirts — this is the
+  //                snowboarder-logo bug the user reported)
+  const designClass = classifyDesign(design);
+  const stampBlend: GlobalCompositeOperation =
+    designClass === "dark"
+      ? "multiply"
+      : designClass === "light"
+      ? "screen"
+      : "source-over";
+  // Kept for back-compat below — fabric-shading branches still check it.
+  const isLightDesign = designClass === "light";
+  const isColorfulDesign = designClass === "colorful";
 
   const canvas = document.createElement("canvas");
   canvas.width = outputSize;
@@ -291,14 +334,25 @@ export async function renderTemplateMockup(
       }
       shctx.putImageData(imageData, 0, 0);
 
-      // Blend the shading map onto the design with the SAME mode we'll
-      // use to stamp the design onto the shirt. This is the key fix:
-      //   • Dark design → multiply (folds darken the print)
-      //   • Light design → screen   (highlights brighten the print)
-      // For light prints we also INVERT the luminance map first so that
-      // dark folds = subtle shadow on the white print (instead of
-      // brightening, which would do nothing on already-white pixels).
-      if (isLightDesign) {
+      // Blend the shading map onto the design. The mode depends on the
+      // design class:
+      //   • Dark design     → multiply (folds darken the print, classic
+      //                       screen-print look)
+      //   • Light design    → inverted luminance × multiply (folds
+      //                       subtly darken white ink so it looks 3D)
+      //   • Colorful design → soft multiply at low alpha (preserves
+      //                       colors but lets the fabric folds modulate
+      //                       brightness a bit — without this the print
+      //                       looks like a flat sticker)
+      if (isColorfulDesign) {
+        // Soft fabric pickup — multiply at half alpha so colors are
+        // mostly preserved but folds still read.
+        sctx.save();
+        sctx.globalCompositeOperation = "multiply";
+        sctx.globalAlpha = 0.45;
+        sctx.drawImage(shading, 0, 0);
+        sctx.restore();
+      } else if (isLightDesign) {
         // Inverted luminance: dark folds = bright on the new map. Then
         // multiply that map onto the white print → folds darken the
         // print a bit, highlights leave it pure white.
@@ -357,7 +411,19 @@ export async function renderTemplateMockup(
   const cx = px + pw / 2;
   const cy = py + ph / 2;
 
-  if (template.blendStrength > 0) {
+  if (isColorfulDesign) {
+    // Colorful prints: single source-over pass at full alpha. The
+    // soft-multiply fabric shading was already baked into the scratch
+    // canvas, so the print already has fold contours; layering with
+    // multiply/screen here would crush the colors. blendStrength is
+    // ignored for colorful designs (no semantic meaning — you don't
+    // want a "translucent" colorful print, you want the colors).
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.drawImage(scratch, -pw / 2, -ph / 2);
+    ctx.restore();
+  } else if (template.blendStrength > 0) {
     // Two-pass: the brightness-appropriate blend for the fabric pickup
     // + source-over for the remaining opacity. Gives the user a smooth
     // 0..1 dial without losing the design itself.
