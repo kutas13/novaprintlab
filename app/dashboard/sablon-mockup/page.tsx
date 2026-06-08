@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Send,
+  RotateCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,15 @@ const TEMPLATES_KEY = "novaprintlab.templates.v1";
 const FOLDERS_KEY = "novaprintlab.folders.v1";
 const EDITING_KEY = "novaprintlab.editingTemplateId.v1";
 const ACTIVE_FOLDER_KEY = "novaprintlab.activeFolderId.v1";
+/** Uploaded (manuel yüklenen) tasarımlar IndexedDB'de saklı kalır —
+ *  kullanıcı sayfa yenilediğinde her seferinde PNG'leri tekrar yüklemek
+ *  zorunda kalmasın. data URL listeleri için uygun. */
+const UPLOADS_KEY = "novaprintlab.uploadedDesigns.v1";
+/** Hangi tasarımın seçili olduğu (id + type yeterli; store designs
+ *  zaten Supabase'den geliyor, upload designs UPLOADS_KEY'den). */
+const SELECTED_DESIGN_KEY = "novaprintlab.selectedDesign.v1";
+/** Hangi tab (mağaza vs yükle) açıktı. */
+const DESIGN_TAB_KEY = "novaprintlab.designTab.v1";
 
 /** Sentinel folder IDs used by the filter chips. They never appear on
  *  templates themselves — only as the page's `activeFolderId` state.    */
@@ -287,6 +297,108 @@ export default function TemplateMockupPage() {
     if (loadingTemplates) return;
     void idbSet(ACTIVE_FOLDER_KEY, activeFolderId);
   }, [activeFolderId, loadingTemplates]);
+
+  // ─── DESIGN PERSISTENCE ──────────────────────────────────────────────
+  // Tracks whether we've restored uploads + selection from IDB yet.
+  // We can't write to IDB before the read has finished or we'd clobber
+  // existing state with whatever empty initial value setState had.
+  const [designsHydrated, setDesignsHydrated] = useState(false);
+
+  // Restore uploads + the selected design + the active tab on mount.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [
+          storedUploads,
+          storedSelected,
+          storedTab,
+        ] = await Promise.all([
+          idbGet<DesignSource[]>(UPLOADS_KEY),
+          idbGet<{ id: string; type: "store" | "upload" }>(
+            SELECTED_DESIGN_KEY
+          ),
+          idbGet<"store" | "upload">(DESIGN_TAB_KEY),
+        ]);
+        if (!alive) return;
+
+        if (storedUploads && storedUploads.length > 0) {
+          setUploadedDesigns(storedUploads);
+        }
+        if (storedTab) {
+          setDesignTab(storedTab);
+        }
+        // We restore the selected design AFTER everything is rendered
+        // — the find-by-id needs `storeDesigns` to have been populated
+        // from the store, which happens asynchronously. We use a
+        // second pass below for that.
+        if (storedSelected) {
+          // Park it in a temp variable; the resolution pass picks it
+          // up by id once the lists are in.
+          (window as unknown as {
+            __pendingSelectedDesign?: typeof storedSelected;
+          }).__pendingSelectedDesign = storedSelected;
+        }
+      } catch (e) {
+        console.error("[designs] hydrate failed:", e);
+      } finally {
+        if (alive) setDesignsHydrated(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Once the design lists are populated, resolve the pending selection
+  // by id. Runs whenever the lists change so it can latch on the first
+  // render where the matching design is available.
+  useEffect(() => {
+    if (!designsHydrated) return;
+    if (selectedDesign) return;
+    const pending = (window as unknown as {
+      __pendingSelectedDesign?: { id: string; type: "store" | "upload" };
+    }).__pendingSelectedDesign;
+    if (!pending) return;
+    const match =
+      pending.type === "store"
+        ? storeDesigns.find((d) => d.id === pending.id)
+        : uploadedDesigns.find((d) => d.id === pending.id);
+    if (match) {
+      setSelectedDesign(match);
+      (window as unknown as {
+        __pendingSelectedDesign?: unknown;
+      }).__pendingSelectedDesign = undefined;
+    }
+  }, [designsHydrated, storeDesigns, uploadedDesigns, selectedDesign]);
+
+  // Persist uploads to IDB (capped: keep the latest 30 so we don't
+  // blow IDB quota — data URLs can be 1-2 MB each).
+  useEffect(() => {
+    if (!designsHydrated) return;
+    const capped = uploadedDesigns.slice(0, 30);
+    void idbSet(UPLOADS_KEY, capped);
+  }, [uploadedDesigns, designsHydrated]);
+
+  // Persist the selected design (id + type only — we re-resolve from
+  // the live lists on next mount).
+  useEffect(() => {
+    if (!designsHydrated) return;
+    if (selectedDesign && selectedDesign.type !== "ai") {
+      void idbSet(SELECTED_DESIGN_KEY, {
+        id: selectedDesign.id,
+        type: selectedDesign.type,
+      });
+    } else if (!selectedDesign) {
+      void idbDel(SELECTED_DESIGN_KEY);
+    }
+  }, [selectedDesign, designsHydrated]);
+
+  // Persist the design tab.
+  useEffect(() => {
+    if (!designsHydrated) return;
+    void idbSet(DESIGN_TAB_KEY, designTab);
+  }, [designTab, designsHydrated]);
 
   // ─── FOLDER ACTIONS ──────────────────────────────────────────────────
   const createFolder = (name: string): boolean => {
@@ -669,266 +781,254 @@ export default function TemplateMockupPage() {
         hasSelectedDesign={!!selectedDesign}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)] gap-5">
-        {/* ─── LEFT PANEL ─── */}
-        <div className="space-y-4">
-          {/* 1) Design picker */}
-          <Section
-            title="1. Tasarım Seç"
-            icon={<Wand2 className="h-4 w-4 text-fuchsia-400" />}
-          >
-            <div className="flex gap-1 p-0.5 bg-slate-950/60 rounded-lg mb-3">
-              <TabBtn
-                active={designTab === "store"}
-                onClick={() => setDesignTab("store")}
-                label="Mağaza"
-                count={storeDesigns.length}
-              />
-              <TabBtn
-                active={designTab === "upload"}
-                onClick={() => setDesignTab("upload")}
-                label="Yükle"
-                count={uploadedDesigns.length}
-              />
-            </div>
+      {/* ─── BIG PREVIEW — top of page, half-height. The hero element of
+          the whole studio: selected template shown HUGE with the design
+          composited live + interactive rotate/resize handles. Empty
+          state when nothing's selected yet. ─────────────────────────── */}
+      {editingTemplate ? (
+        <PrintAreaEditor
+          template={editingTemplate}
+          onChange={(patch) => updateTemplate(editingTemplate.id, patch)}
+          onClose={() => setEditingTemplate(null)}
+          designPreviewSrc={
+            selectedDesign
+              ? selectedDesign.type === "store"
+                ? selectedDesign.imageUrl
+                : selectedDesign.imageDataUrl
+              : null
+          }
+        />
+      ) : (
+        <EmptyPreview
+          hasTemplates={templates.length > 0}
+          onUploadClick={() => templateFileRef.current?.click()}
+        />
+      )}
 
-            {designTab === "store" ? (
-              <DesignGrid
-                designs={storeDesigns}
-                selectedId={selectedDesign?.id || null}
-                onSelect={setSelectedDesign}
-                empty="Henüz mağaza tasarımı yok"
-              />
-            ) : (
-              <div className="space-y-2">
-                <input
-                  type="file"
-                  ref={designFileRef}
-                  accept="image/png,image/jpeg,image/webp"
-                  multiple
-                  hidden
-                  onChange={(e) => handleDesignUpload(e.target.files)}
-                />
-                <button
-                  onClick={() => designFileRef.current?.click()}
-                  className="w-full h-20 rounded-xl border-2 border-dashed border-slate-700/70 hover:border-fuchsia-500/50 bg-slate-900/40 text-slate-300 hover:text-fuchsia-200 transition-all flex flex-col items-center justify-center gap-1"
-                >
-                  <Upload className="h-4 w-4" />
-                  <span className="text-xs font-semibold">
-                    PNG / JPG yükle
-                  </span>
-                </button>
-                <DesignGrid
-                  designs={uploadedDesigns}
-                  selectedId={selectedDesign?.id || null}
-                  onSelect={setSelectedDesign}
-                  empty="Henüz tasarım yüklenmedi"
-                />
-              </div>
-            )}
-          </Section>
-
-          {/* 2) Template library */}
-          <Section
-            title="2. Şablonlarım"
-            icon={<Package className="h-4 w-4 text-emerald-400" />}
-            rightSlot={
-              templates.length > 0 ? (
-                <button
-                  onClick={clearAll}
-                  className="text-[10px] text-slate-500 hover:text-rose-300"
-                >
-                  Hepsini sil
-                </button>
-              ) : null
-            }
-          >
-            {/* ─── FOLDER CHIPS ─── */}
-            <FolderChips
-              folders={folders}
-              counts={folderCounts}
-              activeFolderId={activeFolderId}
-              onSelect={setActiveFolderId}
-              onRename={renameFolder}
-              onDelete={deleteFolder}
-              onCreate={createFolder}
-              dragging={draggingIds !== null}
-              draggingCount={draggingIds?.length || 0}
-              dropTargetFolderId={dropTargetFolderId}
-              onDropTargetChange={setDropTargetFolderId}
-              onDrop={handleDropToFolder}
-            />
-
-            <input
-              type="file"
-              ref={templateFileRef}
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              hidden
-              onChange={(e) => {
-                handleTemplateUpload(e.target.files);
-                if (templateFileRef.current) templateFileRef.current.value = "";
-              }}
-            />
+      {/* ─── DESIGN PICKER — horizontal scroll strip, no longer a full
+          panel. Selected design is highlighted; clicking another design
+          re-renders the BIG PREVIEW above. Persists across reloads. ── */}
+      <Section
+        title="Tasarım Seç"
+        icon={<Wand2 className="h-4 w-4 text-fuchsia-400" />}
+        rightSlot={
+          selectedDesign ? (
             <button
-              onClick={() => templateFileRef.current?.click()}
-              className="w-full h-20 rounded-xl border-2 border-dashed border-emerald-500/30 hover:border-emerald-500/60 bg-emerald-500/5 text-emerald-200 hover:text-emerald-100 transition-all flex flex-col items-center justify-center gap-1 mb-3"
+              onClick={() => setSelectedDesign(null)}
+              className="text-[10px] text-slate-500 hover:text-rose-300"
             >
-              <Plus className="h-5 w-5" />
-              <span className="text-xs font-semibold">
-                {activeFolderId !== FOLDER_ALL &&
-                activeFolderId !== FOLDER_UNCATEGORIZED
-                  ? `'${folders.find((f) => f.id === activeFolderId)?.name}' klasörüne yükle`
-                  : "Blank Ürün Fotoğrafı Yükle"}
-              </span>
-              <span className="text-[10px] text-slate-500">
-                T-shirt, hoodie, sweatshirt — herhangi bir blank ürün PNG/JPG
-              </span>
+              Seçimi temizle
             </button>
-
-            {/* Select-all toggle (only shown when there's something to act on) */}
-            {visibleTemplates.length > 0 && (
-              <div className="flex items-center justify-between mb-2 px-1">
-                <button
-                  onClick={toggleSelectAllVisible}
-                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 hover:text-emerald-200"
-                >
-                  <span
-                    className={cn(
-                      "h-4 w-4 rounded border flex items-center justify-center transition",
-                      allVisibleSelected
-                        ? "bg-emerald-500 border-emerald-500"
-                        : "border-slate-600 bg-slate-900"
-                    )}
-                  >
-                    {allVisibleSelected && (
-                      <CheckCircle2 className="h-3 w-3 text-white" />
-                    )}
-                  </span>
-                  {allVisibleSelected
-                    ? "Seçimi kaldır"
-                    : "Görünenleri seç"}
-                </button>
-                <span className="text-[10px] text-slate-500">
-                  {selectedTemplateIds.size} / {visibleTemplates.length} seçili
-                </span>
-              </div>
-            )}
-
-            {loadingTemplates ? (
-              <div className="text-center text-xs text-slate-500 py-4">
-                <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
-                Şablonlar yükleniyor…
-              </div>
-            ) : visibleTemplates.length === 0 ? (
-              <div className="text-center py-6 px-3 rounded-xl bg-slate-950/40 border border-slate-800/50">
-                <Package className="h-8 w-8 mx-auto mb-2 text-slate-700" />
-                <p className="text-xs text-slate-400 mb-1">
-                  {templates.length === 0
-                    ? "Henüz şablon eklenmemiş"
-                    : "Bu klasör boş"}
-                </p>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  {templates.length === 0
-                    ? "Yukarıdaki butona basıp Etsy'de bulduğun veya kendi çektiğin blank ürün fotoğraflarını yükle. Her şablon bir kere yüklenir, sürekli kullanılır."
-                    : "Bu klasöre şablon ekle veya başka bir klasör seç."}
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-2">
-                {visibleTemplates.map((tpl) => (
-                  <TemplateCard
-                    key={tpl.id}
-                    tpl={tpl}
-                    isSelected={selectedTemplateIds.has(tpl.id)}
-                    isEditing={editingTemplate?.id === tpl.id}
-                    isDragging={draggingIds?.includes(tpl.id) || false}
-                    folders={folders}
-                    // Single tap = both pick this template AND open its
-                    // editor on the right. That gives the user the
-                    // "tıklayınca sağ tarafta ayarlama gelsin" behavior
-                    // they wanted, while still letting them un-tap to
-                    // deselect.
-                    onToggle={() => {
-                      toggleTemplate(tpl.id);
-                      setEditingTemplate(tpl);
-                    }}
-                    onEdit={() => setEditingTemplate(tpl)}
-                    onDelete={() => deleteTemplate(tpl.id)}
-                    onMove={(folderId) => moveTemplate(tpl.id, folderId)}
-                    onDragStart={() => handleDragStart(tpl.id)}
-                    onDragEnd={handleDragEnd}
-                  />
-                ))}
-              </div>
-            )}
-
-            {visibleTemplates.length > 0 && (
-              <p className="text-[10.5px] text-slate-500 mt-3 flex items-center gap-1.5">
-                <AlertCircle className="h-3 w-3" />
-                Pembe kutu = print bölgesi. Düzenlemek için göz ikonuna, klasör
-                taşımak için 3-nokta menüsüne tıkla.
-              </p>
-            )}
-          </Section>
-
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3 flex gap-2.5 text-[11px] text-emerald-200/80 leading-relaxed">
-            <Sparkles className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
-            <span>
-              <span className="font-bold text-emerald-200">
-                Otomatik renk algılama:
-              </span>{" "}
-              Beyaz tasarımlar koyu kumaşa screen blend, siyah tasarımlar
-              açık kumaşa multiply blend ile yerleşir. Hiçbir tasarım
-              kararmaz.
-            </span>
-          </div>
+          ) : null
+        }
+      >
+        <div className="flex gap-1 p-0.5 bg-slate-950/60 rounded-lg mb-3 w-fit">
+          <TabBtn
+            active={designTab === "store"}
+            onClick={() => setDesignTab("store")}
+            label="Mağaza"
+            count={storeDesigns.length}
+          />
+          <TabBtn
+            active={designTab === "upload"}
+            onClick={() => setDesignTab("upload")}
+            label="Yüklediklerim"
+            count={uploadedDesigns.length}
+          />
         </div>
 
-        {/* ─── RIGHT PANEL — preview / editor / results ─── */}
-        <div className="space-y-4">
-          {editingTemplate ? (
-            <PrintAreaEditor
-              template={editingTemplate}
-              onChange={(patch) => updateTemplate(editingTemplate.id, patch)}
-              onClose={() => setEditingTemplate(null)}
-              designPreviewSrc={
-                selectedDesign
-                  ? selectedDesign.type === "store"
-                    ? selectedDesign.imageUrl
-                    : selectedDesign.imageDataUrl
-                  : null
-              }
-            />
-          ) : null}
+        <input
+          type="file"
+          ref={designFileRef}
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          hidden
+          onChange={(e) => handleDesignUpload(e.target.files)}
+        />
 
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/40 backdrop-blur p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-100">
-                  Üretilen Mockuplar
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {results.length === 0
-                    ? "Henüz mockup üretilmedi"
-                    : `${results.length} mockup · $0 toplam maliyet`}
-                </p>
-              </div>
-              {results.length > 0 && (
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setResults([])}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" /> Temizle
-                  </Button>
-                  <Button size="sm" onClick={downloadAllZip}>
-                    <Download className="h-3.5 w-3.5" /> ZIP İndir
-                  </Button>
-                </div>
-              )}
+        <HorizontalDesignStrip
+          designs={
+            designTab === "store" ? storeDesigns : uploadedDesigns
+          }
+          selectedId={selectedDesign?.id || null}
+          onSelect={setSelectedDesign}
+          onUploadClick={
+            designTab === "upload"
+              ? () => designFileRef.current?.click()
+              : null
+          }
+          empty={
+            designTab === "store"
+              ? "Henüz mağaza tasarımı yok"
+              : "Henüz tasarım yüklenmedi — yükle butonuna bas"
+          }
+        />
+      </Section>
+
+      {/* ─── TEMPLATES — full-width, large grid at the bottom of the
+          page. This is where the user lives most of the time: browse
+          their library, organise into folders via drag-drop, pick
+          templates for the current run. ────────────────────────────── */}
+      <Section
+        title="Şablonlar"
+        icon={<Package className="h-4 w-4 text-emerald-400" />}
+        rightSlot={
+          templates.length > 0 ? (
+            <button
+              onClick={clearAll}
+              className="text-[10px] text-slate-500 hover:text-rose-300"
+            >
+              Hepsini sil
+            </button>
+          ) : null
+        }
+      >
+        <FolderChips
+          folders={folders}
+          counts={folderCounts}
+          activeFolderId={activeFolderId}
+          onSelect={setActiveFolderId}
+          onRename={renameFolder}
+          onDelete={deleteFolder}
+          onCreate={createFolder}
+          dragging={draggingIds !== null}
+          draggingCount={draggingIds?.length || 0}
+          dropTargetFolderId={dropTargetFolderId}
+          onDropTargetChange={setDropTargetFolderId}
+          onDrop={handleDropToFolder}
+        />
+
+        <input
+          type="file"
+          ref={templateFileRef}
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          hidden
+          onChange={(e) => {
+            handleTemplateUpload(e.target.files);
+            if (templateFileRef.current) templateFileRef.current.value = "";
+          }}
+        />
+
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <button
+            onClick={() => templateFileRef.current?.click()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 text-[11px] font-bold transition"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {activeFolderId !== FOLDER_ALL &&
+            activeFolderId !== FOLDER_UNCATEGORIZED
+              ? `'${folders.find((f) => f.id === activeFolderId)?.name}' klasörüne yükle`
+              : "Blank Ürün Yükle"}
+          </button>
+
+          {visibleTemplates.length > 0 && (
+            <>
+              <button
+                onClick={toggleSelectAllVisible}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 hover:border-emerald-500/40 bg-slate-900/60 text-slate-300 hover:text-emerald-200 text-[11px] font-semibold transition"
+              >
+                <span
+                  className={cn(
+                    "h-3.5 w-3.5 rounded border flex items-center justify-center",
+                    allVisibleSelected
+                      ? "bg-emerald-500 border-emerald-500"
+                      : "border-slate-500 bg-slate-900"
+                  )}
+                >
+                  {allVisibleSelected && (
+                    <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+                  )}
+                </span>
+                {allVisibleSelected ? "Seçimi kaldır" : "Görünenleri seç"}
+              </button>
+              <span className="text-[10px] text-slate-500 ml-auto">
+                {selectedTemplateIds.size} / {visibleTemplates.length} seçili
+              </span>
+            </>
+          )}
+        </div>
+
+        {loadingTemplates ? (
+          <div className="text-center text-xs text-slate-500 py-8">
+            <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+            Şablonlar yükleniyor…
+          </div>
+        ) : visibleTemplates.length === 0 ? (
+          <div className="text-center py-10 px-3 rounded-xl bg-slate-950/40 border border-slate-800/50">
+            <Package className="h-10 w-10 mx-auto mb-2 text-slate-700" />
+            <p className="text-sm text-slate-400 mb-1 font-semibold">
+              {templates.length === 0
+                ? "Henüz şablon eklenmemiş"
+                : "Bu klasör boş"}
+            </p>
+            <p className="text-[11px] text-slate-500 leading-relaxed max-w-md mx-auto">
+              {templates.length === 0
+                ? "Yukarıdaki butona basıp Etsy'de bulduğun veya kendi çektiğin blank ürün fotoğraflarını yükle. Her şablon bir kere yüklenir, sürekli kullanılır."
+                : "Bu klasöre şablon ekle veya başka bir klasör seç."}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {visibleTemplates.map((tpl) => (
+              <TemplateCard
+                key={tpl.id}
+                tpl={tpl}
+                isSelected={selectedTemplateIds.has(tpl.id)}
+                isEditing={editingTemplate?.id === tpl.id}
+                isDragging={draggingIds?.includes(tpl.id) || false}
+                folders={folders}
+                onToggle={() => {
+                  toggleTemplate(tpl.id);
+                  setEditingTemplate(tpl);
+                }}
+                onEdit={() => setEditingTemplate(tpl)}
+                onDelete={() => deleteTemplate(tpl.id)}
+                onMove={(folderId) => moveTemplate(tpl.id, folderId)}
+                onDragStart={() => handleDragStart(tpl.id)}
+                onDragEnd={handleDragEnd}
+              />
+            ))}
+          </div>
+        )}
+
+        {visibleTemplates.length > 0 && (
+          <p className="text-[10.5px] text-slate-500 mt-3 flex items-center gap-1.5">
+            <AlertCircle className="h-3 w-3" />
+            Şablona tıkla → üstteki büyük preview'da düzenle. 3-nokta menüsü
+            ile klasöre taşı.
+          </p>
+        )}
+      </Section>
+
+      {/* ─── RESULTS ──────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-800/70 bg-slate-900/40 backdrop-blur p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-100">
+              Üretilen Mockuplar
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {results.length === 0
+                ? "Henüz mockup üretilmedi"
+                : `${results.length} mockup · $0 toplam maliyet`}
+            </p>
+          </div>
+          {results.length > 0 && (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setResults([])}
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Temizle
+              </Button>
+              <Button size="sm" onClick={downloadAllZip}>
+                <Download className="h-3.5 w-3.5" /> ZIP İndir
+              </Button>
             </div>
+          )}
+        </div>
 
             {results.length === 0 ? (
               <div className="aspect-video rounded-xl border-2 border-dashed border-slate-800/70 bg-slate-950/40 flex flex-col items-center justify-center text-slate-500 p-6">
@@ -1026,8 +1126,6 @@ export default function TemplateMockupPage() {
                 })}
               </div>
             )}
-          </div>
-        </div>
       </div>
 
       {/* ─── STICKY ACTION BAR ─────────────────────────────────────── */}
@@ -2029,6 +2127,128 @@ function DesignGrid({
   );
 }
 
+/** Compact horizontal-scrolling strip of design thumbnails. Used in the
+ *  new layout where the design picker sits below the BIG PREVIEW and
+ *  takes minimal vertical real estate. Always a single row; users
+ *  scroll horizontally with the mouse wheel or trackpad.            */
+function HorizontalDesignStrip({
+  designs,
+  selectedId,
+  onSelect,
+  empty,
+  onUploadClick,
+}: {
+  designs: DesignSource[];
+  selectedId: string | null;
+  onSelect: (d: DesignSource) => void;
+  empty: string;
+  /** When non-null, an "upload" tile is prepended to the strip. */
+  onUploadClick?: (() => void) | null;
+}) {
+  return (
+    <div className="relative">
+      {/* Single-row, horizontally-scrollable container. Tailwind's
+          `scrollbar-thin` (custom utility) makes the scrollbar slim;
+          fall back to native if not present. */}
+      <div className="flex gap-2.5 overflow-x-auto pb-2 -mb-2 scrollbar-thin">
+        {onUploadClick && (
+          <button
+            onClick={onUploadClick}
+            className="shrink-0 w-24 h-24 rounded-xl border-2 border-dashed border-fuchsia-500/40 hover:border-fuchsia-400 bg-fuchsia-500/[0.04] hover:bg-fuchsia-500/[0.08] text-fuchsia-300 transition-all flex flex-col items-center justify-center gap-1"
+            title="PNG / JPG yükle"
+          >
+            <Upload className="h-4 w-4" />
+            <span className="text-[10px] font-bold leading-tight text-center px-1">
+              PNG / JPG<br />Yükle
+            </span>
+          </button>
+        )}
+        {designs.length === 0 ? (
+          <div className="flex-1 min-w-[200px] h-24 rounded-xl border border-slate-800/60 bg-slate-950/40 flex items-center justify-center text-[11px] text-slate-500 px-3 text-center">
+            {empty}
+          </div>
+        ) : (
+          designs.map((d) => {
+            const src = d.type === "store" ? d.imageUrl : d.imageDataUrl;
+            const label =
+              d.type === "ai"
+                ? d.prompt
+                : d.type === "store"
+                ? d.prompt || "—"
+                : d.name;
+            const isSelected = selectedId === d.id;
+            return (
+              <button
+                key={d.id}
+                onClick={() => onSelect(d)}
+                className={cn(
+                  "shrink-0 w-24 h-24 rounded-xl overflow-hidden border-2 transition-all relative group",
+                  isSelected
+                    ? "border-fuchsia-500 ring-2 ring-fuchsia-500/40 shadow-elev-2 scale-105"
+                    : "border-slate-800 hover:border-slate-600 opacity-75 hover:opacity-100"
+                )}
+                title={label}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={src}
+                  alt={label}
+                  className="w-full h-full object-cover"
+                />
+                {isSelected && (
+                  <div className="absolute top-1 right-1 bg-fuchsia-500 rounded-full p-0.5 shadow-lg">
+                    <CheckCircle2 className="h-3 w-3 text-white" />
+                  </div>
+                )}
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950 to-transparent text-[9px] text-slate-200 px-1.5 py-1 truncate font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                  {label}
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Big empty-state shown in the BIG PREVIEW slot when no template is
+ *  selected. Mirrors the look-and-feel of the editor frame so the
+ *  layout doesn't visually collapse when you arrive on the page with
+ *  nothing picked. */
+function EmptyPreview({
+  hasTemplates,
+  onUploadClick,
+}: {
+  hasTemplates: boolean;
+  onUploadClick: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border-2 border-dashed border-slate-700/50 bg-slate-950/40 flex flex-col items-center justify-center text-center p-8 min-h-[40vh] lg:min-h-[55vh]">
+      <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 flex items-center justify-center mb-3">
+        <Layers className="h-7 w-7 text-slate-500" />
+      </div>
+      <h3 className="text-lg font-bold text-slate-300 mb-1">
+        Bir şablon seç ve düzenle
+      </h3>
+      <p className="text-[12px] text-slate-500 max-w-md mb-4 leading-relaxed">
+        {hasTemplates
+          ? "Aşağıdaki şablonlar listesinden birine tıkla — buradan büyük preview üzerinde print bölgesini sürükleyerek/döndürerek/boyutlandırarak ayarlayabilirsin."
+          : "Önce bir blank ürün fotoğrafı yüklemelisin. Etsy'den, Pinterest'ten ya da kendi çektiğin t-shirt/hoodie/sweatshirt fotoğrafları olur."}
+      </p>
+      {!hasTemplates && (
+        <button
+          onClick={onUploadClick}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all hover:-translate-y-0.5"
+        >
+          <Upload className="h-4 w-4" />
+          İlk Şablonunu Yükle
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── PRINT AREA EDITOR ─────────────────────────────────────────────────────
 //
 // Visual editor for the print area rectangle. Renders the blank product
@@ -2053,21 +2273,52 @@ function PrintAreaEditor({
   designPreviewSrc?: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Drag state:
+   *  - "move"   → pan the box around (start + orig captured)
+   *  - "resize" → drag the bottom-right corner (start + orig captured)
+   *  - "rotate" → twist the box around its center. For rotate we also
+   *               cache the box's center in viewport coords (centerX/Y)
+   *               because Math.atan2 needs absolute coords, not deltas.
+   */
   const [dragging, setDragging] = useState<
-    null | { type: "move" | "resize"; startX: number; startY: number; orig: PrintArea }
+    | null
+    | {
+        type: "move" | "resize" | "rotate";
+        startX: number;
+        startY: number;
+        orig: PrintArea;
+        centerX?: number;
+        centerY?: number;
+      }
   >(null);
 
   const handlePointerDown = (
     e: React.PointerEvent,
-    type: "move" | "resize"
+    type: "move" | "resize" | "rotate"
   ) => {
     e.preventDefault();
     e.stopPropagation();
+    // For rotate, capture the box's center in viewport coords up-front
+    // so the move handler can compute the pointer angle without re-
+    // measuring the (rotated) DOM rect on every frame.
+    let centerX: number | undefined;
+    let centerY: number | undefined;
+    if (type === "rotate" && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      centerX =
+        rect.left +
+        (template.printArea.x + template.printArea.w / 2) * rect.width;
+      centerY =
+        rect.top +
+        (template.printArea.y + template.printArea.h / 2) * rect.height;
+    }
     setDragging({
       type,
       startX: e.clientX,
       startY: e.clientY,
       orig: { ...template.printArea },
+      centerX,
+      centerY,
     });
     (e.target as Element).setPointerCapture?.(e.pointerId);
   };
@@ -2080,6 +2331,30 @@ function PrintAreaEditor({
     if (!container) return;
 
     const onMove = (e: PointerEvent) => {
+      if (
+        dragging.type === "rotate" &&
+        dragging.centerX != null &&
+        dragging.centerY != null
+      ) {
+        // Angle from the box's center to the pointer, measured CW from
+        // "up" (12 o'clock = 0°, 3 o'clock = +90°, 9 o'clock = -90°).
+        // atan2(dx, -dy) returns exactly this convention, in radians.
+        const dx = e.clientX - dragging.centerX;
+        const dy = e.clientY - dragging.centerY;
+        let angle = (Math.atan2(dx, -dy) * 180) / Math.PI;
+        // Snap to 0 when within 2° — makes "back to straight" trivial.
+        if (Math.abs(angle) < 2) angle = 0;
+        // Holding Shift snaps to 15° increments — common design tool
+        // convention for precise rotation.
+        if (e.shiftKey) {
+          angle = Math.round(angle / 15) * 15;
+        }
+        onChange({
+          printArea: { ...dragging.orig, rotation: angle },
+        });
+        return;
+      }
+
       const rect = container.getBoundingClientRect();
       const dx = (e.clientX - dragging.startX) / rect.width;
       const dy = (e.clientY - dragging.startY) / rect.height;
@@ -2089,7 +2364,7 @@ function PrintAreaEditor({
         onChange({
           printArea: { ...dragging.orig, x: nx, y: ny },
         });
-      } else {
+      } else if (dragging.type === "resize") {
         const nw = clamp(dragging.orig.w + dx, 0.05, 1 - dragging.orig.x);
         const nh = clamp(dragging.orig.h + dy, 0.05, 1 - dragging.orig.y);
         onChange({
@@ -2114,26 +2389,33 @@ function PrintAreaEditor({
   };
 
   return (
-    <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-500/[0.05] to-slate-900/40 backdrop-blur p-4 sm:p-5 shadow-elev-2">
-      <div className="flex items-center justify-between mb-4">
+    <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-500/[0.05] to-slate-900/40 backdrop-blur p-4 sm:p-5 shadow-elev-3">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Eye className="h-4 w-4 text-blue-300" />
           <h3 className="text-sm font-bold text-slate-100">
-            Print Bölgesi: {template.label}
+            Düzenliyorsun:{" "}
+            <span className="text-blue-300">{template.label}</span>
           </h3>
         </div>
         <button
           onClick={onClose}
-          className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-700 hover:border-rose-500/40 hover:bg-rose-500/10 text-[11px] text-slate-400 hover:text-rose-200 transition"
+          title="Düzenlemeyi kapat"
         >
-          <X className="h-4 w-4" />
+          <X className="h-3 w-3" />
+          Kapat
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_180px] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,260px)] gap-5 items-start">
+        {/* BIG preview area — sized to ~half the viewport height on
+            desktop so it dominates the page. aspect-square keeps the
+            print-area coords (which are 0..1 ratios) faithful between
+            preview and final render. */}
         <div
           ref={containerRef}
-          className="relative bg-slate-950 rounded-xl overflow-hidden aspect-square select-none touch-none"
+          className="relative bg-slate-950 rounded-xl overflow-hidden aspect-square select-none touch-none w-full lg:max-w-[58vh] lg:max-h-[58vh] mx-auto shadow-elev-2"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -2207,14 +2489,41 @@ function PrintAreaEditor({
               onPointerDown={(e) => handlePointerDown(e, "resize")}
               title="Boyutlandır"
             />
+
+            {/* ROTATE HANDLE — small circular topuz that sits ABOVE the
+                top edge of the box, connected by a short stem. Dragging
+                it sweeps the angle relative to the box center. Replaces
+                the old slider — visual & direct manipulation. */}
+            <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-full pb-1 flex flex-col items-center pointer-events-none">
+              <button
+                type="button"
+                onPointerDown={(e) => handlePointerDown(e, "rotate")}
+                className={cn(
+                  "w-6 h-6 rounded-full bg-rose-500 border-2 border-slate-900 shadow-lg flex items-center justify-center pointer-events-auto z-10 transition",
+                  dragging?.type === "rotate"
+                    ? "scale-125 cursor-grabbing ring-2 ring-rose-300/60"
+                    : "cursor-grab hover:scale-110"
+                )}
+                title="Sürükleyerek döndür · Shift = 15° snap"
+              >
+                <RotateCw className="h-3 w-3 text-white" />
+              </button>
+              <div
+                className={cn(
+                  "w-0.5 bg-rose-400 transition-all",
+                  dragging?.type === "rotate" ? "h-3" : "h-2"
+                )}
+              />
+            </div>
           </div>
         </div>
 
         <div className="space-y-3">
           <p className="text-[11px] text-slate-400 leading-relaxed">
             Pembe kutuyu <span className="text-rose-300">sürükleyerek</span>{" "}
-            taşı, sağ alttaki noktayı sürükleyerek boyutlandır. Veya aşağıdan
-            yüzde değerlerini gir.
+            taşı, sağ alttaki noktayı sürükleyerek boyutlandır, üstteki{" "}
+            <span className="text-rose-300">yuvarlak topuzu</span> sürükleyerek
+            döndür.
           </p>
           <div className="grid grid-cols-2 gap-2">
             <Field
@@ -2239,32 +2548,26 @@ function PrintAreaEditor({
             />
           </div>
 
-          {/* Rotation — fixes mockups where the shirt is hung slightly tilted */}
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex justify-between mb-1">
-              <span>Eğim / Rotasyon</span>
-              <span className="text-rose-300">
+          {/* Rotation — visual handle on the box is the primary control;
+              this is just a readout + reset. Slider removed per UX
+              feedback ("kırmızı kutunun üstündeki yuvarlak şeyle"). */}
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <RotateCw className="h-3 w-3" /> Rotasyon
+              </span>
+              <span className="text-sm font-mono font-bold text-rose-300 tabular-nums">
                 {(template.printArea.rotation || 0).toFixed(1)}°
               </span>
-            </label>
-            <input
-              type="range"
-              min={-30}
-              max={30}
-              step={0.5}
-              value={template.printArea.rotation || 0}
-              onChange={(e) =>
-                onChange({
-                  printArea: {
-                    ...template.printArea,
-                    rotation: parseFloat(e.target.value),
-                  },
-                })
-              }
-              className="w-full accent-rose-500"
-            />
-            <div className="flex justify-between text-[9px] text-slate-500 mt-0.5">
-              <span>← Sola</span>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1 leading-snug">
+              Kutunun üstündeki yuvarlak topuzu sürükle.
+              <kbd className="px-1 py-0.5 mx-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] text-slate-300 font-mono">
+                Shift
+              </kbd>
+              ile 15° snap.
+            </p>
+            {Math.abs(template.printArea.rotation || 0) > 0.1 && (
               <button
                 type="button"
                 onClick={() =>
@@ -2272,12 +2575,11 @@ function PrintAreaEditor({
                     printArea: { ...template.printArea, rotation: 0 },
                   })
                 }
-                className="text-slate-400 hover:text-rose-300 underline"
+                className="mt-1.5 w-full text-[10px] text-slate-400 hover:text-rose-300 underline"
               >
-                Sıfırla
+                Sıfırla (0°)
               </button>
-              <span>Sağa →</span>
-            </div>
+            )}
           </div>
 
           {/* Multiply blend strength — overall how much the design picks up
